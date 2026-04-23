@@ -13,7 +13,7 @@ if __name__ == '__main__':
   while date != '2025-02-08':
     try:
       nhl = sports.NHL(date)
-      df = retrieve.SportsbookReviewAPI(nhl.money_line, 'Money Line', 'Date', date).return_data()
+      df = retrieve.SportsbookReviewAPI(nhl.money_line, 'Money Line', 'Date', date, sport='nhl').return_data()
       df_list.append(df)
       date = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1))
       date = date.strftime('%Y-%m-%d')
@@ -36,7 +36,7 @@ if __name__ == '__main__':
   while date != '2025-02-10':
     print("Date:", date)
     nhl = sports.NHL(date)
-    test_df = retrieve.SportsbookReviewAPI(nhl.money_line, 'Money Line', 'Date', date).return_data()
+    test_df = retrieve.SportsbookReviewAPI(nhl.money_line, 'Money Line', 'Date', date, sport='nhl').return_data()
     print("Test Data:", test_df)
     for i in range(len(test_df)):
       print(f"Game {i+1}")
@@ -60,7 +60,7 @@ if __name__ == '__main__':
   while week <= 18:
     try:
       nfl = sports.NFL(week)
-      df = retrieve.SportsbookReviewAPI(nfl.money_line, 'Money Line', 'Week', week).return_data()
+      df = retrieve.SportsbookReviewAPI(nfl.money_line, 'Money Line', 'Week', week, sport='nfl').return_data()
       print("Week ", week)
       df_list.append(df)
       week += 1
@@ -79,7 +79,7 @@ if __name__ == '__main__':
   print("Wild Card Week")
   week = "SuperBowl"
   nfl = sports.NFL(week)
-  wildcard_df = retrieve.SportsbookReviewAPI(nfl.money_line, 'Money Line', 'Week', week).return_data()
+  wildcard_df = retrieve.SportsbookReviewAPI(nfl.money_line, 'Money Line', 'Week', week, sport='nfl').return_data()
   print(wildcard_df)
   for i in range(len(wildcard_df)):
     print(f"Game {i+1}")
