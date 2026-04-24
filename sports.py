@@ -221,7 +221,7 @@ class NCAAF():
     """
     Creates the links for each half bet types for NCAAF.
     """
-    self.h1_spread, self.h1_money_line, self.h1_totals = self.links.halves(2)
+    self.h1_spread, self.h1_money_line, self.h1_totals = self.links.halves(1)
     self.h2_spread, self.h2_money_line, self.h2_totals = self.links.halves(2)
 
 class NCAAB():

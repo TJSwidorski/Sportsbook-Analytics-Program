@@ -78,19 +78,17 @@ class NaiveBayes():
       win_num.append(num_line_win)
       loss_num.append(num_line_loss)
 
-    #Calculate probability
-    #Find P(Win|X Lines) * P(Win)
-    num = 1
+    #Calculate probability using Naive Bayes: P(Win|X) ∝ P(Win) * Π P(line_i|Win)
+    #Prior is applied once, not once per feature.
+    num = wins / len(self.data)
     for i in win_num:
-      num *= (i/wins) * (wins/len(self.data))
+      num *= i / wins
 
-    #Find P(Loss|X Lines) * P(Loss)
-    denom = 1
+    denom_loss = losses / len(self.data)
     for i in loss_num:
-      denom *= (i/losses) * (losses/len(self.data))
+      denom_loss *= i / losses
 
-    #Calculate sum off the probability of all possible outcomes (Win/Loss)
-    denom += num
+    denom = num + denom_loss
 
     #If there is a division by zero, the probability does not have enough information.
     try:

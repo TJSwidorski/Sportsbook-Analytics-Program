@@ -9,13 +9,19 @@ class MoneyLineAPI():
   Handles sports where raw odds data contains no embedded player names.
   Sport-specific subclasses override _is_player_name() when needed.
   """
+  # Default score start indices keyed by date type (NBA/NFL/NHL/NCAAB baseline).
+  # Subclasses may override _scores_indices to point to different positions
+  # when their HTML structure differs.
+  _scores_indices = {
+    'Week': [3, 4],
+    'Date': [2, 3],
+  }
+
   def __init__(self, date_type: str, date, data, scores):
     self.date_type = date_type.lower().capitalize()
-    indices_dict = {
-      'Week': [3, 4],
-      'Date': [2, 3]
-    }
-    self.scores_indices = indices_dict[self.date_type]
+    indices = self.__class__._scores_indices
+    # Support either a dict keyed by date type or a direct [first, second] list
+    self.scores_indices = indices[self.date_type] if isinstance(indices, dict) else indices
     self.date = "Week " + str(date) if isinstance(date, int) else date
     self.data = self.clean_data(data)
     self.scores = self.clean_scores(scores)
@@ -134,6 +140,35 @@ class MoneyLineAPI():
 
     return scores
 
+  def _sequential_clean_scores(self, scores_data) -> list:
+    """
+    Alternative score parser for sports whose scores_data embeds team or
+    pitcher names (MLS, WNBA, CFL, MLB).
+
+    Strategy:
+      1. Filter to purely numeric tokens, discarding headers, team names,
+         pitcher names, and no-data markers ('--', '-').
+      2. Walk the token list, skipping concatenated score strings
+         (e.g. '2133' that equals the next two tokens '21'+'33').
+      3. Collect the remaining tokens as [away, home] pairs.
+    """
+    tokens = [t for t in scores_data if t.isdigit()]
+
+    scores = []
+    i = 0
+    while i < len(tokens):
+      # Detect a concatenated score: token == next_token + following_token
+      if (i + 2 < len(tokens) and tokens[i] == tokens[i + 1] + tokens[i + 2]):
+        i += 1  # skip the concat; the two components follow
+        continue
+      if i + 1 < len(tokens):
+        scores.append([tokens[i], tokens[i + 1]])
+        i += 2
+      else:
+        break
+
+    return scores
+
   def package(self):
     """
     Combine cleaned line data and scores into a single DataFrame.
@@ -190,21 +225,23 @@ class MLBMoneyLineAPI(_PlayerNameMixin, MoneyLineAPI):
   """
   Money line parser for MLB.
 
-  SportsBook Review MLB data consistently includes starting pitcher names
-  inline with odds. This parser filters those names before building the
-  lines list.
+  Pitcher names appear in both the odds data (filtered by _PlayerNameMixin)
+  and the scores data. Scores are parsed with _sequential_clean_scores to
+  skip pitcher name tokens and concatenated score strings.
   """
-  pass
+  def clean_scores(self, scores_data):
+    return self._sequential_clean_scores(scores_data)
 
 
 class MLSMoneyLineAPI(MoneyLineAPI):
   """
   Money line parser for MLS (soccer).
 
-  Draws are valid outcomes; clean_scores returns None/None for tied games,
-  which Package handles correctly downstream.
+  Team names are embedded in scores_data. Draws (0-0, 1-1, etc.) produce
+  None/None W/L, handled correctly by Package downstream.
   """
-  pass
+  def clean_scores(self, scores_data):
+    return self._sequential_clean_scores(scores_data)
 
 
 class NCAAFMoneyLineAPI(MoneyLineAPI):
@@ -218,13 +255,25 @@ class NCAABMoneyLineAPI(MoneyLineAPI):
 
 
 class WNBAMoneyLineAPI(MoneyLineAPI):
-  """Money line parser for WNBA. Date-based, no player names."""
-  pass
+  """
+  Money line parser for WNBA.
+
+  Team names (e.g. 'Indiana', 'New York') are embedded in scores_data.
+  """
+  def clean_scores(self, scores_data):
+    return self._sequential_clean_scores(scores_data)
 
 
 class CFLMoneyLineAPI(MoneyLineAPI):
-  """Money line parser for CFL. Week-based, no player names."""
-  pass
+  """
+  Money line parser for CFL.
+
+  Team names are embedded in scores_data; the default week-based indices
+  [3, 4] land on a score and a team name respectively. _sequential_clean_scores
+  handles this by ignoring all non-numeric tokens.
+  """
+  def clean_scores(self, scores_data):
+    return self._sequential_clean_scores(scores_data)
 
 
 # ---------------------------------------------------------------------------
