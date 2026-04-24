@@ -17,6 +17,9 @@ data/
 # Claude Code session
 .claude/
 
+# Component spec files (design references, not source code)
+components/
+
 # OS
 .DS_Store
 Thumbs.db

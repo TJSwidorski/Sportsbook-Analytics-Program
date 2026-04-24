@@ -1,0 +1,19 @@
+# Web scraping & data
+requests
+beautifulsoup4
+pandas
+pyarrow
+
+# ML
+scikit-learn
+
+# Deep learning (optional — only needed for deep_learn.py)
+keras
+tensorflow
+
+# API server
+flask
+flask-cors
+
+# Testing
+pytest
