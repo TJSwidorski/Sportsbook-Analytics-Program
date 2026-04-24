@@ -4,24 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-**Start Flask API:**
+**Start everything (Flask API + Next.js frontend) in one terminal:**
+```bash
+cd web && npm run dev:all
+```
+
+**Start Flask API only:**
 ```bash
 python api.py
 ```
 
-**Start Next.js frontend:**
+**Start Next.js frontend only:**
 ```bash
 cd web && npm run dev
 ```
 
-**Run unit tests:**
+**Run all unit tests:**
 ```bash
 python -m pytest tests/
 ```
 
-**Run demo pipeline:**
+**Run a single test file:**
 ```bash
-python main.py
+python -m pytest tests/test_package.py
+```
+
+**Run a single test by name:**
+```bash
+python -m pytest tests/test_bayes.py -k "test_probability_bounds"
 ```
 
 **Install Python dependencies:**
@@ -102,3 +112,9 @@ tests/
 ```
 
 103 tests total. All network calls are mocked with `unittest.mock.patch`.
+
+**Legacy files (not part of the pipeline):**
+
+- **`main.py`** — Hardcoded demo script (NFL week 9, NHL/NBA 2024-11-15). Use `runner.py` for real orchestration.
+- **`deep_learn.py`** — Experimental TensorFlow/Keras neural network (not wired into the pipeline). Requires keras/tensorflow extras not in `requirements.txt`.
+- **`tests.py`**, **`test_bayes.py`** (root-level) — Pre-pytest exploration scripts; superseded by `tests/`.

@@ -14,19 +14,8 @@ export default function HomePage() {
 
       <main className="relative min-h-screen pt-28 pb-20">
         <div className="max-w-7xl mx-auto px-6 space-y-16">
-          <div
-            className="animate-in-up"
-            style={{ animationDelay: '0.1s' }}
-          >
-            <HeroSection date={TODAY} sportsCount={9} totalPicks={0} />
-          </div>
-
-          <div
-            className="animate-in-up"
-            style={{ animationDelay: '0.3s' }}
-          >
-            <PicksSection date={TODAY} />
-          </div>
+          <HeroSection date={TODAY} sportsCount={9} totalPicks={0} />
+          <PicksSection date={TODAY} />
         </div>
       </main>
 

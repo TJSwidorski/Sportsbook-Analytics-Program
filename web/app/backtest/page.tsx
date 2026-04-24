@@ -10,9 +10,7 @@ export default function BacktestPage() {
 
       <main className="relative min-h-screen pt-28 pb-20">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="animate-in-up" style={{ animationDelay: '0.1s' }}>
-            <BacktestTerminal />
-          </div>
+          <BacktestTerminal />
         </div>
       </main>
 
