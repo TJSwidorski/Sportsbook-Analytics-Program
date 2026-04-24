@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:all": "concurrently -n api,web -c blue,green \"cd .. && python api.py\" \"next dev\"",
+    "dev:all": "concurrently -n api,web -c blue,green \"cd .. && py api.py\" \"next dev\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
