@@ -105,13 +105,16 @@ def picks_all():
 
 @app.route('/api/backtest', methods=['POST'])
 def run_backtest():
-    body = request.json or {}
-    sport = body.get('sport', 'nba')
-    start = body.get('start', '2024-01-01')
-    end = body.get('end', '2024-12-31')
-    window = int(body.get('training_window_days', 60))
-
     try:
+        body = request.get_json(silent=True) or {}
+        sport = body.get('sport', 'nba')
+        start = body.get('start', '2024-01-01')
+        end = body.get('end', '2024-12-31')
+        try:
+            window = int(body.get('training_window_days') or 60)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'training_window_days must be an integer'}), 400
+
         from backtest import Backtester
         result = Backtester(sport, start, end, window).run()
         return jsonify({
@@ -142,4 +145,6 @@ def run_backtest():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    from prefetch import start_background_prefetch
+    start_background_prefetch(fallback_days_back=60)
+    app.run(debug=True, port=5000, use_reloader=False)

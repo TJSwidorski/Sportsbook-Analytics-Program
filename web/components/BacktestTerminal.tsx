@@ -93,13 +93,25 @@ export function BacktestTerminal() {
     setError(null)
     setResult(null)
     try {
+      const parsedWindow = parseInt(window)
+      if (!Number.isFinite(parsedWindow) || parsedWindow <= 0) {
+        throw new Error('Training window must be a positive integer')
+      }
       const resp = await fetch('/api/backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sport, start, end, training_window_days: parseInt(window) }),
+        body: JSON.stringify({ sport, start, end, training_window_days: parsedWindow }),
       })
-      const data: BacktestResponse = await resp.json()
-      if (data.error) throw new Error(data.error)
+      const text = await resp.text()
+      let data: BacktestResponse
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(`Server returned non-JSON (HTTP ${resp.status}): ${text.slice(0, 300)}`)
+      }
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || `HTTP ${resp.status}`)
+      }
       setResult(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')

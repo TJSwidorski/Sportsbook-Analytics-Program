@@ -1,3 +1,4 @@
+import time
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -108,6 +109,7 @@ class MoneyLineAPI():
 
     while True:
       if scores[game_index] == ['0', '0']:
+        found = False
         for index, string in enumerate(data):
           if '%' in string:
             i = index
@@ -115,7 +117,13 @@ class MoneyLineAPI():
             data = data[i + 5:]
             scores.remove(['0', '0'])
             scores.append(next_score)
+            found = True
             break
+        if not found:
+          # No '%' marker left — remaining games are unplayed. Drop the
+          # placeholder and stop; downstream dropna() handles short scores.
+          scores.remove(['0', '0'])
+          break
         continue
 
       i = self.find(scores[game_index], data)
@@ -137,35 +145,6 @@ class MoneyLineAPI():
         print("Score causing error:", scores)
         print("Data:", data)
         raise ValueError(self.date)
-
-    return scores
-
-  def _sequential_clean_scores(self, scores_data) -> list:
-    """
-    Alternative score parser for sports whose scores_data embeds team or
-    pitcher names (MLS, WNBA, CFL, MLB).
-
-    Strategy:
-      1. Filter to purely numeric tokens, discarding headers, team names,
-         pitcher names, and no-data markers ('--', '-').
-      2. Walk the token list, skipping concatenated score strings
-         (e.g. '2133' that equals the next two tokens '21'+'33').
-      3. Collect the remaining tokens as [away, home] pairs.
-    """
-    tokens = [t for t in scores_data if t.isdigit()]
-
-    scores = []
-    i = 0
-    while i < len(tokens):
-      # Detect a concatenated score: token == next_token + following_token
-      if (i + 2 < len(tokens) and tokens[i] == tokens[i + 1] + tokens[i + 2]):
-        i += 1  # skip the concat; the two components follow
-        continue
-      if i + 1 < len(tokens):
-        scores.append([tokens[i], tokens[i + 1]])
-        i += 2
-      else:
-        break
 
     return scores
 
@@ -226,22 +205,40 @@ class MLBMoneyLineAPI(_PlayerNameMixin, MoneyLineAPI):
   Money line parser for MLB.
 
   Pitcher names appear in both the odds data (filtered by _PlayerNameMixin)
-  and the scores data. Scores are parsed with _sequential_clean_scores to
-  skip pitcher name tokens and concatenated score strings.
+  and the scores data. Each game's score block ends with a betting-percentage
+  marker (e.g. '56%44%') which anchors the recap totals.
   """
   def clean_scores(self, scores_data):
-    return self._sequential_clean_scores(scores_data)
+    """
+    Parse MLB score totals by anchoring on the concatenated betting-%
+    marker that closes each game's row. Per-game token layout from SBR:
+
+      AwayPitcher(L|R)  AwayTotal
+      HomePitcher(L|R)  HomeTotal
+      [InningConcat I_a I_h] × 9 innings
+      AwayRecap  HomeRecap          ← what we want
+      'XX%YY%'  'XX%'  'YY%'
+
+    The two numeric tokens immediately preceding the 'XX%YY%' marker are
+    the recap totals for that game. Games still in progress or postponed
+    have no marker and are simply skipped (downstream dropna handles the
+    short scores frame).
+    """
+    scores = []
+    for i, token in enumerate(scores_data):
+      if token.count('%') != 2 or i < 2:
+        continue
+      away = scores_data[i - 2]
+      home = scores_data[i - 1]
+      if away.isdigit() and home.isdigit():
+        scores.append([away, home])
+    return scores
 
 
 class MLSMoneyLineAPI(MoneyLineAPI):
-  """
-  Money line parser for MLS (soccer).
-
-  Team names are embedded in scores_data. Draws (0-0, 1-1, etc.) produce
-  None/None W/L, handled correctly by Package downstream.
-  """
+  """Money line parser for MLS (soccer). Score parser: TODO."""
   def clean_scores(self, scores_data):
-    return self._sequential_clean_scores(scores_data)
+    return []
 
 
 class NCAAFMoneyLineAPI(MoneyLineAPI):
@@ -255,25 +252,15 @@ class NCAABMoneyLineAPI(MoneyLineAPI):
 
 
 class WNBAMoneyLineAPI(MoneyLineAPI):
-  """
-  Money line parser for WNBA.
-
-  Team names (e.g. 'Indiana', 'New York') are embedded in scores_data.
-  """
+  """Money line parser for WNBA. Score parser: TODO."""
   def clean_scores(self, scores_data):
-    return self._sequential_clean_scores(scores_data)
+    return []
 
 
 class CFLMoneyLineAPI(MoneyLineAPI):
-  """
-  Money line parser for CFL.
-
-  Team names are embedded in scores_data; the default week-based indices
-  [3, 4] land on a score and a team name respectively. _sequential_clean_scores
-  handles this by ignoring all non-numeric tokens.
-  """
+  """Money line parser for CFL. Score parser: TODO."""
   def clean_scores(self, scores_data):
-    return self._sequential_clean_scores(scores_data)
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -333,14 +320,40 @@ class SportsbookReviewAPI():
       'totals': TotalsAPI,
     }
 
+    tag = f"[sbr-trace {self.sport}/{date}]"
+    t0 = time.perf_counter()
+    def _mark(stage: str):
+      print(f"{tag} {stage} t+{time.perf_counter() - t0:.2f}s", flush=True)
+
+    _mark("BEGIN get_soup")
     self.soup = self.get_soup()
+    _mark("END   get_soup")
+
+    _mark("BEGIN get_data")
     data = self.get_data()
+    _mark(f"END   get_data (tokens={len(data)})")
+
+    _mark("BEGIN get_scores")
     scores = self.get_scores()
+    _mark(f"END   get_scores (tokens={len(scores)})")
+
+    _mark("BEGIN MoneyLineAPI.__init__ (clean_data + clean_scores)")
     bet_data = bet_dict[self.bet_type](self.date_type, date, data, scores)
+    _mark("END   MoneyLineAPI.__init__")
+
+    _mark("BEGIN package")
     self.df = bet_data.package()
+    _mark("END   package")
 
   def get_soup(self):
-    page = requests.get(self.url)
+    # SBR blocks the default python-requests UA (hangs indefinitely), so we
+    # masquerade as a browser. Timeout guards against network stalls.
+    headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/120.0.0.0 Safari/537.36',
+    }
+    page = requests.get(self.url, headers=headers, timeout=20)
     if page.status_code == 200:
       return BeautifulSoup(page.text, 'html.parser')
     raise FileNotFoundError(f"Unable to access URL: {self.url}")

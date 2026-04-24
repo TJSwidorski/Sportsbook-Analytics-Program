@@ -66,7 +66,7 @@ class NFL():
     elif type(week_num) == str:
       self.__week = week_num
     #Initialize the base url
-    self.__base_url = "https://sportsbookreview.com/betting-odds/nfl-football/?week="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/nfl-football/?week="
     #Create the base links
     self.links = BetTypes(self.__base_url, self.__week)
     #Set full-game spread link
@@ -105,7 +105,7 @@ class NBA():
     Creates the links for each bet type and time type for the NFL.
     """
     self.__date = date
-    self.__base_url = "https://sportsbookreview.com/betting-odds/nba-basketball/?date="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/nba-basketball/?date="
     self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -138,7 +138,7 @@ class NHL():
     Creates the links for each bet type and time type for the NHL.
     """
     self.__date = date
-    self.__base_url = "https://sportsbookreview.com/betting-odds/nhl-hockey/?date="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/nhl-hockey/?date="
     self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -163,7 +163,7 @@ class MLB():
     Creates the links for each bet type and time type for the MLB.
     """
     self.__date = date
-    self.__base_url = "https://sportsbookreview.com/betting-odds/mlb-baseball/?date="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/mlb-baseball/?date="
     self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -185,7 +185,7 @@ class MLS():
     Creates the links for each bet type and time type for the MLS.
     """
     self.__date = date
-    self.__base_url = "https://sportsbookreview.com/betting-odds/major-league-soccer/?date="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/major-league-soccer/?date="
     self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -200,7 +200,7 @@ class NCAAF():
     Creates the links for each bet type and time type for NCAAF.
     """
     self.__week = str(week_num)
-    self.__base_url = "https://sportsbookreview.com/betting-odds/college-football/?week=Week"
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/college-football/?week=Week"
     self.links = BetTypes(self.__base_url, self.__week)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -233,7 +233,7 @@ class NCAAB():
     Creates the links for each bet type and time type for NCAAB.
     """
     self.__date = date
-    self.__base_url = "https://sportsbookreview.com/betting-odds/ncaa-basketball/?date="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/ncaa-basketball/?date="
     self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -266,7 +266,7 @@ class WNBA():
     Creates the links for each bet type and time type for the WNBA.
     """
     self.__date = date
-    self.__base_url = "https://sportsbookreview.com/betting-odds/wnba-basketball/?date="
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/wnba-basketball/?date="
     self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
@@ -299,7 +299,7 @@ class CFL():
     Creates the links for each bet type and time type for the CFL.
     """
     self.__week = str(week_num)
-    self.__base_url = "https://sportsbookreview.com/betting-odds/cfl-football/?week=Week"
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/cfl-football/?week=Week"
     self.links = BetTypes(self.__base_url, self.__week)
     self.spread = self.links.spread
     self.money_line = self.links.money_line

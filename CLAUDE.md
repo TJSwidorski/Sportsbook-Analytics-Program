@@ -44,6 +44,13 @@ pip install -r requirements.txt
 cd web && npm install
 ```
 
+**Seed the SQLite cache (one-shot bulk loader for the last two seasons):**
+```bash
+python seed_db.py                              # all sports, both seasons
+python seed_db.py --sport nba,nhl              # subset
+python seed_db.py --seasons previous --force   # re-fetch only previous season
+```
+
 ## Architecture
 
 Sports betting analytics pipeline: scrape odds → cache → transform → Naive Bayes picks → REST API → Next.js website.
@@ -53,7 +60,7 @@ Sports betting analytics pipeline: scrape odds → cache → transform → Naive
 SportsBookReview.com
   → sports.py     (URL generation per sport/date/week)
   → retrieve.py   (HTML scraping → DataFrame)
-  → store.py      (local parquet cache at data/{sport}/{key}.parquet)
+  → store.py      (SQLite cache at data/cache.db — games + cached_keys tables)
   → package.py    (odds → probabilities, scores → Win/Loss labels)
   → bayes.py      (Naive Bayes classifier)
   → picks.py      (PickEngine: train + predict_all)
@@ -67,7 +74,7 @@ SportsBookReview.com
 
 - **`config.py`** — `SPORTS` dict with date_type and season windows. `is_in_season(sport, date)` handles cross-year seasons. `date_to_week(sport, date)` converts calendar dates to SBR week numbers using `_WEEK1_STARTS`. Add new season years there each year.
 
-- **`store.py`** — Parquet cache. `save/load/exists/list_available(sport, key)`. Cache lives at `data/{sport}/{key}.parquet`. The `key` is a date string for date-based sports or a week number string for week-based sports.
+- **`store.py`** — SQLite cache at `data/cache.db`. Public API: `save/load/exists/list_available(sport, key)` plus `max_cached_date(sport)`. The `games` table holds one row per game (odds lists JSON-encoded); `cached_keys` records every fetched `(sport, cache_key)` including empty days so they don't get re-fetched forever. The `key` is a date string for date-based sports or a week number string for week-based sports.
 
 - **`sports.py`** — `BetTypes` base class generates spread/money-line/totals URLs. Nine sport subclasses (NFL, NBA, NHL, MLB, MLS, NCAAF, NCAAB, WNBA, CFL); week-based sports take an int week number, date-based take a `YYYY-MM-DD` string.
 
@@ -83,7 +90,11 @@ SportsBookReview.com
 
 - **`backtest.py`** — `Backtester(sport, start, end, training_window_days=60).run()` → `BacktestResult`. Walk-forward only; raises `RuntimeError` on cache miss. Units: correct `-200` → +0.50, correct `+150` → +1.50, wrong → −1.00, No Pick/Tie → 0.00.
 
-- **`api.py`** — Flask server on port 5000. Rewrites proxied from Next.js at `/api/*`. Endpoints: `GET /api/sports`, `GET /api/picks`, `GET /api/picks/all`, `POST /api/backtest`.
+- **`prefetch.py`** — `start_background_prefetch(fallback_days_back=60)` launches a daemon thread that gap-fills the cache from `store.max_cached_date(sport)` → today per sport (or the fallback window when the cache is empty), calling `runner._fetch_live` for missing entries. Invoked from `api.py` at startup. Exposes `iter_cache_keys(sport, start, end)` which `seed_db.py` reuses.
+
+- **`seed_db.py`** — One-shot CLI bulk loader. Seeds the last two season windows per sport so the website doesn't need to scrape everything on first run. See Commands above for flags.
+
+- **`api.py`** — Flask server on port 5000. Rewrites proxied from Next.js at `/api/*`. Endpoints: `GET /api/sports`, `GET /api/picks`, `GET /api/picks/all`, `POST /api/backtest`. Spawns `prefetch` thread at startup.
 
 **Frontend (`web/`):**
 
@@ -99,7 +110,7 @@ SportsBookReview.com
 
 **Supported sports:** NBA, NHL, MLB, MLS, NCAAB, WNBA (date-based) · NFL, NCAAF, CFL (week-based).
 
-**Data dependency:** Live scraping requires a connection to SportsBookReview.com. Backtesting is cache-only — populate the cache first by running the daily runner.
+**Data dependency:** Live scraping requires a connection to SportsBookReview.com. Backtesting is cache-only — populate the cache first with `python seed_db.py`; the API's prefetch thread keeps it current on subsequent starts.
 
 ## Tests
 

@@ -236,48 +236,86 @@ class TestCleanData(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _sequential_clean_scores
+# MLB clean_scores — anchors on the 'XX%YY%' marker that closes each game
 # ---------------------------------------------------------------------------
 
-class TestSequentialCleanScores(unittest.TestCase):
+# Two completed MLB games; layout per game:
+#   AwayPitcher AwayTotal  HomePitcher HomeTotal
+#   [InningConcat I_a I_h] × 9 innings
+#   AwayRecap HomeRecap  'XX%YY%'  'XX%'  'YY%'
+_SCORES_MLB_REAL = [
+    'Rot', 'WAGERSOPENER',
+    'L.Giolito(R)', '11', 'M.Soroka(R)', '2',
+    '00', '0', '0', '20', '2', '0', '00', '0', '0', '00', '0', '0',
+    '70', '7', '0', '01', '0', '1', '00', '0', '0', '20', '2', '0',
+    '01', '0', '1',
+    '11', '2',
+    '56%44%', '56%', '44%',
+    'A.Abbott(L)', '9', 'J.Luzardo(L)', '6',
+    '03', '0', '3', '10', '1', '0', '51', '5', '1', '10', '1', '0',
+    '20', '2', '0', '02', '0', '2', '00', '0', '0', '00', '0', '0',
+    '00', '0', '0',
+    '9', '6',
+    '48%52%', '48%', '52%',
+]
+
+
+class TestMLBCleanScores(unittest.TestCase):
     def setUp(self):
-        self.api = MoneyLineAPI.__new__(MoneyLineAPI)
+        self.api = MLBMoneyLineAPI.__new__(MLBMoneyLineAPI)
 
-    def test_mls_style_scores(self):
-        scores = self.api._sequential_clean_scores(_SCORES_MLS_STYLE)
-        self.assertEqual(len(scores), 2)
-        self.assertEqual(scores[0], ['0', '0'])
-        self.assertEqual(scores[1], ['2', '1'])
+    def test_extracts_recap_totals(self):
+        scores = self.api.clean_scores(_SCORES_MLB_REAL)
+        self.assertEqual(scores, [['11', '2'], ['9', '6']])
 
-    def test_mlb_style_scores(self):
-        scores = self.api._sequential_clean_scores(_SCORES_MLB_STYLE)
-        self.assertEqual(len(scores), 3)
-        self.assertEqual(scores[0], ['7', '2'])
-        self.assertEqual(scores[1], ['0', '1'])
-        self.assertEqual(scores[2], ['3', '2'])
+    def test_double_digit_totals(self):
+        # Recap can have multi-digit values like '11' or '24'
+        data = [
+            'Rot', 'WAGERSOPENER',
+            'P1(R)', '24', 'P2(L)', '3',
+            '24', '3',
+            '70%30%', '70%', '30%',
+        ]
+        scores = self.api.clean_scores(data)
+        self.assertEqual(scores, [['24', '3']])
 
-    def test_concat_skipped(self):
-        # Trailing concat '2133' should be skipped; only the leading pair is kept.
-        # (A concat with no following pair has nothing to absorb.)
-        data = ['Rot', 'WAGERSOPENER', '21', '33', '2133']
-        scores = self.api._sequential_clean_scores(data)
-        self.assertEqual(scores, [['21', '33']])
+    def test_unfinished_games_skipped(self):
+        # No '%%' marker → no recap → empty result
+        data = [
+            'Rot', 'WAGERSOPENER',
+            'P1(R)', '0', 'P2(L)', '0', '--', '-', '-',
+        ]
+        self.assertEqual(self.api.clean_scores(data), [])
 
-    def test_all_zeros(self):
-        # Future games: 3 games of 0-0
-        data = ['Rot', 'WAGERSOPENER', 'Team A', '0', 'Team B', '0', '--',
-                'Team C', '0', 'Team D', '0', '--',
-                'Team E', '0', 'Team F', '0', '--']
-        scores = self.api._sequential_clean_scores(data)
-        self.assertEqual(len(scores), 3)
-        for s in scores:
-            self.assertEqual(s, ['0', '0'])
+    def test_ignores_single_percent_token(self):
+        # '56%' alone (count('%') == 1) must not anchor; only 'XX%YY%' does
+        data = ['Rot', 'WAGERSOPENER', '5', '4', '56%', '5', '4', '50%50%']
+        scores = self.api.clean_scores(data)
+        self.assertEqual(scores, [['5', '4']])
 
     def test_returns_list_of_two_element_lists(self):
-        scores = self.api._sequential_clean_scores(_SCORES_MLS_STYLE)
+        scores = self.api.clean_scores(_SCORES_MLB_REAL)
         for s in scores:
             self.assertIsInstance(s, list)
             self.assertEqual(len(s), 2)
+
+
+# ---------------------------------------------------------------------------
+# MLS / WNBA / CFL clean_scores — stubs that return [] until implemented
+# ---------------------------------------------------------------------------
+
+class TestStubScoreParsers(unittest.TestCase):
+    def test_mls_returns_empty(self):
+        api = MLSMoneyLineAPI.__new__(MLSMoneyLineAPI)
+        self.assertEqual(api.clean_scores(['anything']), [])
+
+    def test_wnba_returns_empty(self):
+        api = WNBAMoneyLineAPI.__new__(WNBAMoneyLineAPI)
+        self.assertEqual(api.clean_scores(['anything']), [])
+
+    def test_cfl_returns_empty(self):
+        api = CFLMoneyLineAPI.__new__(CFLMoneyLineAPI)
+        self.assertEqual(api.clean_scores(['anything']), [])
 
 
 # ---------------------------------------------------------------------------
