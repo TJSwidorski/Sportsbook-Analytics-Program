@@ -80,6 +80,15 @@ class TestNaiveBayesProbability(unittest.TestCase):
         prob = self.model.probability(['+999', '-999', '+888'])
         self.assertTrue(prob is None or prob == 0.0)
 
+    def test_dead_feature_does_not_collapse_signal(self):
+        # First two lines are strong win features; third is unseen in the
+        # training data on both sides. Pre-fix this returned None (0/0 from
+        # the dead column zeroing both numerator and denominator). Post-fix
+        # the dead column is skipped and the win signal carries the day.
+        prob = self.model.probability(['+110', '-120', '+999'])
+        self.assertIsNotNone(prob)
+        self.assertAlmostEqual(prob, 1.0, places=5)
+
     def test_probability_bounded(self):
         # Any valid probability must be in [0, 1]
         prob = self.model.probability(['+110', '-120', '+105'])

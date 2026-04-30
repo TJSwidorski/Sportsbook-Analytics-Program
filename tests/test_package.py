@@ -1,6 +1,8 @@
+import math
 import unittest
 import pandas as pd
 from package import Package
+from bayes import NaiveBayes
 
 # Synthetic 3-game raw DataFrame matching the shape retrieve.py produces.
 _RAW_DF = pd.DataFrame({
@@ -151,6 +153,83 @@ class TestToNbValues(unittest.TestCase):
     def test_home_wl_binary(self):
         for val in self.pkg.return_home()['Home W/L'].dropna():
             self.assertIn(val, (0, 1))
+
+
+class TestTieRowsExcludedFromNbTraining(unittest.TestCase):
+    """Regression: ties leak NaN into Naive Bayes via the W/L float column."""
+
+    def test_to_nb_values_drops_ties(self):
+        # 2 wins, 1 tie, 1 loss for the home side.
+        df = pd.DataFrame({
+            'Date': ['d'] * 4,
+            'Away Lines': [['+100'], ['-110'], ['-110'], ['+150']],
+            'Home Lines': [['-110'], ['+100'], ['-110'], ['-170']],
+            'Away Score': ['98',  '110', '88',  '120'],
+            'Home Score': ['101', '95',  '88',  '102'],  # row 2 is a tie
+        })
+        pkg = Package(df, true_prob=False)
+        home = pkg.return_home()
+        # 4 input rows minus 1 tie => 3 training rows
+        self.assertEqual(len(home), 3)
+        # No NaN snuck into the W/L column
+        self.assertTrue(home['Home W/L'].notna().all())
+
+    def test_naive_bayes_never_returns_nan_with_ties(self):
+        df = pd.DataFrame({
+            'Date': ['d'] * 3,
+            'Away Lines': [['-110'], ['-110'], ['+200']],
+            'Home Lines': [['-110'], ['-110'], ['-250']],
+            'Away Score': ['100', '100', '90'],
+            'Home Score': ['100', '100', '95'],  # rows 0 and 1 are ties
+        })
+        pkg = Package(df, true_prob=False)
+        model = NaiveBayes('Home', pkg.return_home())
+        result = model.probability(['-250'])
+        # With ties stripped, the only training row is a 1-of-1 home win at -250.
+        # The model should produce a real number (or None), never NaN.
+        if result is not None:
+            self.assertFalse(math.isnan(result))
+
+
+class TestOutlierClipping(unittest.TestCase):
+    """Pairs with |line| > 1000 must be dropped from both training paths."""
+
+    def _df_with_outlier_first_book(self):
+        return pd.DataFrame({
+            'Date': ['2024-11-15'],
+            'Away Lines': [['-10000', '+150', '+148']],
+            'Home Lines': [['+5000',  '-160', '-158']],
+            'Away Score': ['98'],
+            'Home Score': ['101'],
+        })
+
+    def test_to_nb_values_drops_outlier_pair(self):
+        df = self._df_with_outlier_first_book()
+        pkg = Package(df, true_prob=False)
+        away = pkg.return_away()
+        home = pkg.return_home()
+        # First (outlier) pair stripped; only the two valid pairs remain.
+        self.assertEqual(away.iloc[0]['Away Lines'], ['+150', '+148'])
+        self.assertEqual(home.iloc[0]['Home Lines'], ['-160', '-158'])
+
+    def test_to_values_drops_outlier_pair(self):
+        df = self._df_with_outlier_first_book()
+        pkg = Package(df, true_prob=True)
+        out = pkg.return_df()
+        # Only the two valid pairs survive into the true-prob arrays.
+        self.assertEqual(len(out.iloc[0]['Away Odds']), 2)
+        self.assertEqual(len(out.iloc[0]['Home Odds']), 2)
+
+    def test_clean_rows_pass_through_unchanged(self):
+        df = pd.DataFrame({
+            'Date': ['2024-11-15'],
+            'Away Lines': [['+110', '-120']],
+            'Home Lines': [['-110', '+120']],
+            'Away Score': ['98'],
+            'Home Score': ['101'],
+        })
+        pkg = Package(df, true_prob=False)
+        self.assertEqual(pkg.return_away().iloc[0]['Away Lines'], ['+110', '-120'])
 
 
 if __name__ == '__main__':

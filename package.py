@@ -1,5 +1,25 @@
 import pandas as pd
 
+from betmath import is_valid_line
+
+
+def _drop_outlier_pairs(away_lines, home_lines):
+  """
+  Drop (away, home) line pairs where either side is missing or an outlier
+  (|line| > 1000). Outlier opening lines like -10000 dominate book-only
+  averages and create spurious unique features in NB; treating them as
+  missing keeps the rest of the row usable.
+
+  Returns aligned (away_lines, home_lines) lists, possibly shorter.
+  """
+  cleaned_away, cleaned_home = [], []
+  for a, h in zip(away_lines, home_lines):
+    if is_valid_line(a) and is_valid_line(h):
+      cleaned_away.append(a)
+      cleaned_home.append(h)
+  return cleaned_away, cleaned_home
+
+
 class Package():
   """
   Packages Sportsbook line data so it can be processed
@@ -79,9 +99,8 @@ class Package():
     home_scores_array = []
 
     for _, val in self.df.iterrows():
-      #Get the away and home lines
-      away_lines = val['Away Lines']
-      home_lines = val['Home Lines']
+      #Get the away and home lines (drop outlier pairs before any math)
+      away_lines, home_lines = _drop_outlier_pairs(val['Away Lines'], val['Home Lines'])
       #Set the away and home arrays for the current game
       away_array = []
       home_array = []
@@ -129,19 +148,18 @@ class Package():
     home_scores_array = []
 
     for _, val in self.df.iterrows():
-      #Get the away and home lines
-      away_lines = val['Away Lines']
-      home_lines = val['Home Lines']
+      #Calculate Win/Loss; skip ties — W/L=None becomes NaN in the float column
+      #and poisons every Naive Bayes sum (number_wins, P(Line|Win), etc.).
+      a, h = self.win_loss([val['Away Score'], val['Home Score']])
+      if a is None:
+        continue
 
-      #Get the away and home scores
-      away_score = val['Away Score']
-      home_score = val['Home Score']
+      away_lines, home_lines = _drop_outlier_pairs(val['Away Lines'], val['Home Lines'])
+      if not away_lines:
+        continue
 
       away_lines_array.append(away_lines)
       home_lines_array.append(home_lines)
-
-      #Calculate Win/Loss
-      a, h = self.win_loss([away_score, home_score])
       away_scores_array.append(a)
       home_scores_array.append(h)
 

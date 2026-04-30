@@ -301,21 +301,176 @@ class TestMLBCleanScores(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# MLS / WNBA / CFL clean_scores — stubs that return [] until implemented
+# MLS / WNBA / CFL clean_scores — anchored on the '--' end-of-game marker
 # ---------------------------------------------------------------------------
 
-class TestStubScoreParsers(unittest.TestCase):
-    def test_mls_returns_empty(self):
+class TestMLSCleanScores(unittest.TestCase):
+    """MLS layout: AwayTeam, AwayScore, HomeTeam, HomeScore, '--', '-', '-'."""
+
+    def _parse(self, tokens):
         api = MLSMoneyLineAPI.__new__(MLSMoneyLineAPI)
-        self.assertEqual(api.clean_scores(['anything']), [])
+        return api.clean_scores(tokens)
 
-    def test_wnba_returns_empty(self):
+    def test_single_game(self):
+        tokens = ['Rot', 'WAGERSOPENER', 'Austin', '3', 'Toronto', '3', '--', '-', '-']
+        self.assertEqual(self._parse(tokens), [['3', '3']])
+
+    def test_multi_game(self):
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            'Austin', '3', 'Toronto', '3', '--', '-', '-',
+            'NYRB',   '1', 'Montreal', '4', '--', '-', '-',
+        ]
+        self.assertEqual(self._parse(tokens), [['3', '3'], ['1', '4']])
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(self._parse([]), [])
+
+
+class TestWNBACleanScores(unittest.TestCase):
+    """WNBA layout: team/score, four quarter triples, recap, '--', '-', '-'."""
+
+    def _parse(self, tokens):
         api = WNBAMoneyLineAPI.__new__(WNBAMoneyLineAPI)
-        self.assertEqual(api.clean_scores(['anything']), [])
+        return api.clean_scores(tokens)
 
-    def test_cfl_returns_empty(self):
+    def test_single_game(self):
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            'Indiana', '85', 'Connecticut', '77',
+            '2928', '29', '28', '1514', '15', '14',
+            '1818', '18', '18', '2317', '23', '17',
+            '85', '77', '--', '-', '-',
+        ]
+        self.assertEqual(self._parse(tokens), [['85', '77']])
+
+
+class TestNFLCleanScoresBase(unittest.TestCase):
+    """
+    NFL inherits the base clean_scores. Layout per game (week-based, four
+    quarters, % marker — same shape as NBA):
+        AwayFinal, HomeFinal,
+        [Q_concat, Q_a, Q_h] x 4,
+        AwayRecap, HomeRecap,
+        'XX%YY%', 'XX%', 'YY%'
+    Synthetic regression test: the parser cannot currently be verified
+    against live SBR data (their NFL archive returns empty oddsTables).
+    """
+
+    def _api(self, scores):
+        api = MoneyLineAPI.__new__(MoneyLineAPI)
+        api.date_type = 'Week'
+        api.scores_indices = MoneyLineAPI._scores_indices['Week']
+        api.scores = api.clean_scores(scores)
+        return api
+
+    def test_two_games_with_pct_marker(self):
+        scores = [
+            'Rot', 'WAGERSOPENER', 'Game',
+            '21', '17',
+            '70', '7', '0', '73', '7', '3', '07', '0', '7', '77', '7', '7',
+            '21', '17', '52%48%', '52%', '48%',
+            '24', '31',
+            '03', '0', '3', '147', '14', '7', '710', '7', '10', '311', '3', '11',
+            '24', '31', '38%62%', '38%', '62%',
+        ]
+        api = self._api(scores)
+        self.assertEqual(api.scores, [['21', '17'], ['24', '31']])
+
+
+class TestNCAABCleanScoresBase(unittest.TestCase):
+    """
+    NCAAB shares the base clean_scores algorithm (final at top, period splits,
+    recap, end-of-game marker). Unlike NBA/NFL it always uses '--' rather than
+    a 'XX%YY%' marker, and unlike NBA it has 2 halves instead of 4 quarters.
+    """
+
+    def _api(self, scores):
+        # Build a base MoneyLineAPI directly (NCAAB has no overrides).
+        api = MoneyLineAPI.__new__(MoneyLineAPI)
+        api.date_type = 'Date'
+        api.scores_indices = MoneyLineAPI._scores_indices['Date']
+        api.scores = api.clean_scores(scores)
+        return api
+
+    def test_two_games_with_dash_marker(self):
+        # Layout: final, [H1triple, H2triple], recap, '--', '-', '-'
+        scores = [
+            'Rot', 'WAGERSOPENER',
+            '59', '74',
+            '2830', '28', '30', '3144', '31', '44',
+            '59', '74', '--', '-', '-',
+            '76', '88',
+            '4249', '42', '49', '3439', '34', '39',
+            '76', '88', '--', '-', '-',
+        ]
+        api = self._api(scores)
+        self.assertEqual(api.scores, [['59', '74'], ['76', '88']])
+
+
+class TestNHLCleanScores(unittest.TestCase):
+    """NHL anchors on the per-game 'XX%YY%' marker, like MLB."""
+
+    def _parse(self, tokens):
+        api = NHLMoneyLineAPI.__new__(NHLMoneyLineAPI)
+        return api.clean_scores(tokens)
+
+    def test_modern_layout_no_goalies(self):
+        # Layout used in current SBR data: final + 3 period triples + recap + %
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            '1', '2',
+            '00', '0', '0', '01', '0', '1', '11', '1', '1',
+            '1', '2', '27%73%', '27%', '73%',
+        ]
+        self.assertEqual(self._parse(tokens), [['1', '2']])
+
+    def test_legacy_layout_with_inline_goalies(self):
+        # Older SBR data prepended starting goalies inside the score block;
+        # %-anchoring keeps offsets stable so the recap still resolves.
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            'L.Dostal', '1', 'J.Quick', '5',
+            '11', '1', '1', '02', '0', '2', '02', '0', '2',
+            '1', '5', '25%75%', '25%', '75%',
+        ]
+        self.assertEqual(self._parse(tokens), [['1', '5']])
+
+    def test_postponed_game_skipped(self):
+        # '--' marker (no '%%') → no recap → game omitted from scores
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            'K.Kahkonen', '0', 'C.Ingram', '1',
+            '00', '0', '0', '01', '0', '1', '00', '0', '0',
+            '0', '1', '--', '-', '-',
+        ]
+        self.assertEqual(self._parse(tokens), [])
+
+
+class TestCFLCleanScores(unittest.TestCase):
+    """CFL has two layouts; both end with '--', home score at i-1."""
+
+    def _parse(self, tokens):
         api = CFLMoneyLineAPI.__new__(CFLMoneyLineAPI)
-        self.assertEqual(api.clean_scores(['anything']), [])
+        return api.clean_scores(tokens)
+
+    def test_long_layout_with_quarter_splits(self):
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            'Edmonton', '47', 'Hamilton', '22',
+            '70', '7', '0', '253', '25', '3',
+            '013', '0', '13', '156', '15', '6',
+            '47', '22', '--', '-', '-',
+        ]
+        self.assertEqual(self._parse(tokens), [['47', '22']])
+
+    def test_short_layout_mls_style(self):
+        tokens = [
+            'Rot', 'WAGERSOPENER',
+            'Calgary', '24', 'Saskatchewan', '10', '--', '-', '-',
+            'Ottawa',  '20', 'Hamilton',     '23', '--', '-', '-',
+        ]
+        self.assertEqual(self._parse(tokens), [['24', '10'], ['20', '23']])
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +545,130 @@ class TestSportsbookReviewAPI(unittest.TestCase):
 
 # Import NFLMoneyLineAPI for the week-based test above
 from retrieve import NFLMoneyLineAPI
+
+
+# ---------------------------------------------------------------------------
+# __NEXT_DATA__ metadata extraction
+# ---------------------------------------------------------------------------
+
+import json as _json
+import pandas as _pd
+
+
+def _next_data_payload(games, books):
+    """Build a minimal __NEXT_DATA__ JSON payload mimicking SBR's shape."""
+    return {
+        'props': {
+            'pageProps': {
+                'oddsTables': [{
+                    'oddsTableModel': {
+                        'gameRows': [
+                            {'gameView': {
+                                'awayTeam': {'fullName': g[0], 'shortName': g[1]},
+                                'homeTeam': {'fullName': g[2], 'shortName': g[3]},
+                            }} for g in games
+                        ],
+                        'sportsbooks': [{'name': b} for b in books],
+                    }
+                }]
+            }
+        }
+    }
+
+
+def _fixture_with_next_data(games, books):
+    payload = _json.dumps(_next_data_payload(games, books))
+    spans = (
+      '<span class="fs-9">7:30 PM ET</span>'
+      + '<span class="fs-9">+110</span><span class="fs-9">-110</span>' * 7
+    )
+    divs = (
+      '<div class="fs-9">Rot</div><div class="fs-9">WAGERSOPENER</div>'
+      '<div class="fs-9">21</div><div class="fs-9">33</div>'
+      '<div class="fs-9">2133</div><div class="fs-9">21</div>'
+      '<div class="fs-9">33</div><div class="fs-9">73%27%</div>'
+    )
+    return (
+      '<html><body>' + spans + divs +
+      '<script id="__NEXT_DATA__" type="application/json">' + payload +
+      '</script></body></html>'
+    )
+
+
+class TestExtractMetadata(unittest.TestCase):
+    @patch('retrieve.requests.get')
+    def test_extract_populates_team_and_book_columns(self, mock_get):
+        html = _fixture_with_next_data(
+            games=[('Detroit Pistons', 'DET', 'Orlando Magic', 'ORL')],
+            books=['BetMGM', 'FanDuel'],
+        )
+        mock_resp = MagicMock(); mock_resp.status_code = 200; mock_resp.text = html
+        mock_get.return_value = mock_resp
+
+        api = SportsbookReviewAPI(
+            'http://fake.url', 'Money Line', 'Date', '2024-11-15', sport='nba'
+        )
+        df = api.return_data()
+
+        self.assertEqual(df.iloc[0]['Away Team'], 'Detroit Pistons')
+        self.assertEqual(df.iloc[0]['Home Team'], 'Orlando Magic')
+        self.assertEqual(df.iloc[0]['Away Abbr'], 'DET')
+        self.assertEqual(df.iloc[0]['Home Abbr'], 'ORL')
+        self.assertEqual(df.iloc[0]['Sportsbooks'], ['Open', 'BetMGM', 'FanDuel'])
+
+    @patch('retrieve.requests.get')
+    def test_extract_failsoft_when_next_data_absent(self, mock_get):
+        # _FIXTURE_HTML has no <script id="__NEXT_DATA__"> — extraction must
+        # fail soft and return empty strings/list, NOT raise.
+        mock_resp = MagicMock(); mock_resp.status_code = 200; mock_resp.text = _FIXTURE_HTML
+        mock_get.return_value = mock_resp
+
+        api = SportsbookReviewAPI(
+            'http://fake.url', 'Money Line', 'Date', '2024-11-15', sport='nba'
+        )
+        df = api.return_data()
+
+        for col in ('Away Team', 'Home Team', 'Away Abbr', 'Home Abbr'):
+            self.assertEqual(df.iloc[0][col], '')
+        self.assertEqual(df.iloc[0]['Sportsbooks'], [])
+
+    @patch('retrieve.requests.get')
+    def test_extract_failsoft_on_malformed_payload(self, mock_get):
+        html = (
+          '<html><body>'
+          '<span class="fs-9">7:30 PM ET</span>'
+          + '<span class="fs-9">+110</span><span class="fs-9">-110</span>' * 7 +
+          '<div class="fs-9">Rot</div><div class="fs-9">WAGERSOPENER</div>'
+          '<div class="fs-9">21</div><div class="fs-9">33</div>'
+          '<div class="fs-9">2133</div><div class="fs-9">21</div>'
+          '<div class="fs-9">33</div><div class="fs-9">73%27%</div>'
+          '<script id="__NEXT_DATA__" type="application/json">{"props": {}}</script>'
+          '</body></html>'
+        )
+        mock_resp = MagicMock(); mock_resp.status_code = 200; mock_resp.text = html
+        mock_get.return_value = mock_resp
+
+        api = SportsbookReviewAPI(
+            'http://fake.url', 'Money Line', 'Date', '2024-11-15', sport='nba'
+        )
+        df = api.return_data()
+        self.assertEqual(df.iloc[0]['Away Team'], '')
+        self.assertEqual(df.iloc[0]['Sportsbooks'], [])
+
+    def test_attach_metadata_pads_short_lists(self):
+        df = _pd.DataFrame({
+            'Date': ['2024-11-15', '2024-11-15'],
+            'Away Lines': [['+110'], ['+120']],
+            'Home Lines': [['-110'], ['-120']],
+        })
+        out = SportsbookReviewAPI._attach_metadata(
+            df, ['DET'], ['ORL'], ['DET'], ['ORL'], ['Open', 'BetMGM']
+        )
+        self.assertEqual(list(out['Away Team']), ['DET', ''])
+        self.assertEqual(list(out['Home Team']), ['ORL', ''])
+        self.assertEqual(out.iloc[0]['Sportsbooks'], ['Open', 'BetMGM'])
+        self.assertEqual(out.iloc[1]['Sportsbooks'], ['Open', 'BetMGM'])
+
 
 if __name__ == '__main__':
     unittest.main()

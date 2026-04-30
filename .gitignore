@@ -20,6 +20,10 @@ data/
 # Component spec files (design references, not source code)
 components/
 
+# graphify
+graphify-out/
+.graphify_*
+
 # OS
 .DS_Store
 Thumbs.db

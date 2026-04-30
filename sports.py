@@ -293,14 +293,17 @@ class WNBA():
 class CFL():
   """
   The base class for CFL data.
+
+  CFL is date-based on SBR (the ?week= URL only returns a placeholder for
+  archived weeks, while ?date= correctly serves historical odds and scores).
   """
-  def __init__(self, week_num: int):
+  def __init__(self, date: str):
     """
     Creates the links for each bet type and time type for the CFL.
     """
-    self.__week = str(week_num)
-    self.__base_url = "https://www.sportsbookreview.com/betting-odds/cfl-football/?week=Week"
-    self.links = BetTypes(self.__base_url, self.__week)
+    self.__date = date
+    self.__base_url = "https://www.sportsbookreview.com/betting-odds/cfl-football/?date="
+    self.links = BetTypes(self.__base_url, self.__date)
     self.spread = self.links.spread
     self.money_line = self.links.money_line
     self.totals = self.links.totals

@@ -7,6 +7,9 @@ a list of Picks.
 
 run_all_sports() iterates every sport in config.SPORTS, skips sports that are
 out of season, and collects picks for a given calendar date string.
+
+get_upcoming_picks() / run_all_sports_upcoming() power the front page: today's
+picks with already-completed games filtered out, plus tomorrow's full slate.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ _SPORT_CLASS = {
     'ncaaf': (sp.NCAAF, 'week'),
     'ncaab': (sp.NCAAB, 'date'),
     'wnba':  (sp.WNBA,  'date'),
-    'cfl':   (sp.CFL,   'week'),
+    'cfl':   (sp.CFL,   'date'),
 }
 
 
@@ -74,9 +77,10 @@ def get_daily_picks(
     date_or_week,
     training_window_days: int = 60,
     force_refresh: bool = False,
+    model_type: str = 'logreg',
 ) -> list[Pick]:
     """
-    Return Naive Bayes picks for one sport on one date/week.
+    Return picks for one sport on one date/week.
 
     Steps:
       1. Load today's odds from cache; fetch live and cache if absent or forced.
@@ -105,7 +109,7 @@ def get_daily_picks(
         if df is not None:
             training_frames.append(df)
 
-    engine = PickEngine(sport)
+    engine = PickEngine(sport, model_type=model_type)
     if training_frames:
         historical = pd.concat(training_frames, ignore_index=True)
         engine.train(historical)
@@ -113,7 +117,7 @@ def get_daily_picks(
     return engine.predict_all(df_today)
 
 
-def run_all_sports(date: str) -> dict[str, list[Pick]]:
+def run_all_sports(date: str, model_type: str = 'logreg') -> dict[str, list[Pick]]:
     """
     Return picks for every in-season sport on the given calendar date string.
     Week-based sports convert the date to a week number via config.date_to_week().
@@ -136,9 +140,111 @@ def run_all_sports(date: str) -> dict[str, list[Pick]]:
             date_or_week = date
 
         try:
-            results[sport] = get_daily_picks(sport, date_or_week)
+            results[sport] = get_daily_picks(sport, date_or_week, model_type=model_type)
         except Exception as exc:
             print(f'[runner] {sport} failed: {exc}')
             results[sport] = []
 
     return results
+
+
+def _is_score_present(value) -> bool:
+    """True iff value is a non-empty string/number that parses as a number."""
+    if value is None:
+        return False
+    if isinstance(value, float) and pd.isna(value):
+        return False
+    s = str(value).strip()
+    if not s:
+        return False
+    try:
+        float(s)
+    except ValueError:
+        return False
+    return True
+
+
+def _completed_indices(df: pd.DataFrame) -> set[int]:
+    """Row positions in df where both Away Score and Home Score are present numbers."""
+    if df is None or df.empty:
+        return set()
+    away = df.get('Away Score')
+    home = df.get('Home Score')
+    if away is None or home is None:
+        return set()
+    completed: set[int] = set()
+    for i in range(len(df)):
+        if _is_score_present(away.iloc[i]) and _is_score_present(home.iloc[i]):
+            completed.add(i)
+    return completed
+
+
+def _picks_for_date(
+    sport: str,
+    d: datetime.date,
+    filter_completed: bool,
+    model_type: str = 'logreg',
+) -> list[Pick]:
+    """
+    Return picks for one sport on one calendar date.
+    If filter_completed is True, drop picks whose game already has both final scores.
+    """
+    cfg = config.SPORTS.get(sport)
+    if cfg is None or not config.is_in_season(sport, d):
+        return []
+
+    if cfg['date_type'] == 'week':
+        date_or_week = config.date_to_week(sport, d)
+        if date_or_week is None:
+            return []
+    else:
+        date_or_week = d.isoformat()
+
+    try:
+        picks = get_daily_picks(sport, date_or_week, model_type=model_type)
+    except Exception as exc:
+        print(f'[runner] {sport} {d} failed: {exc}')
+        return []
+
+    if not filter_completed:
+        return picks
+
+    key = _cache_key(sport, date_or_week)
+    df = store.load(sport, key)
+    completed = _completed_indices(df)
+    if not completed:
+        return picks
+    return [p for p in picks if p.game_index not in completed]
+
+
+def get_upcoming_picks(
+    sport: str,
+    today_iso: str,
+    model_type: str = 'logreg',
+) -> dict[str, list[Pick]]:
+    """
+    Return {'today': [...], 'tomorrow': [...]} for one sport.
+
+    'today' is the unplayed-only slice for today_iso.
+    'tomorrow' is the full slate for the day after — no completion filter
+    (these games haven't happened yet by definition).
+
+    Out-of-season days yield an empty list for that bucket.
+    """
+    today_d = datetime.date.fromisoformat(today_iso)
+    tomorrow_d = today_d + datetime.timedelta(days=1)
+    return {
+        'today': _picks_for_date(sport, today_d, filter_completed=True, model_type=model_type),
+        'tomorrow': _picks_for_date(sport, tomorrow_d, filter_completed=False, model_type=model_type),
+    }
+
+
+def run_all_sports_upcoming(
+    today_iso: str,
+    model_type: str = 'logreg',
+) -> dict[str, dict[str, list[Pick]]]:
+    """Return {sport: {'today': [...], 'tomorrow': [...]}} for every sport in SPORTS."""
+    return {
+        sport: get_upcoming_picks(sport, today_iso, model_type=model_type)
+        for sport in config.SPORTS
+    }

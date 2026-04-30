@@ -3,7 +3,7 @@ Walk-forward backtester.
 
 Backtester iterates every cached date/week in [start, end] for a sport.
 For each date D:
-  - Training data = cached entries from [D - window, D-1]
+  - Training data = all cached entries in the same season as D, strictly before D
   - Test data     = cached entry for D (raises RuntimeError if absent)
   - Picks are generated and compared against actual scores.
 
@@ -25,6 +25,7 @@ import pandas as pd
 
 import config
 import store
+from betmath import settle_pick
 from package import Package
 from picks import PickEngine
 
@@ -36,7 +37,11 @@ class GameResult:
     pick: str        # 'Away' | 'Home' | 'No Pick'
     actual: str      # 'Away' | 'Home' | 'Tie'
     correct: bool
-    units: float
+    units: float            # flat (1u per pick) — kept for back-compat
+    kelly_units: float      # weighted by Pick.unit_size
+    bet_line: str | None    # the line we'd actually bet at (best book, not opener)
+    unit_size: float        # fractional Kelly bet size, 0 on No Pick
+    ev: float | None        # EV at the time of pick
     away_lines: list
     home_lines: list
 
@@ -50,25 +55,12 @@ class BacktestResult:
     games_picked: int
     correct_picks: int
     accuracy: float
-    total_units: float
+    total_units: float       # flat staking
+    flat_units: float        # explicit alias
+    kelly_units: float       # fractional-Kelly staking
+    max_drawdown: float = 0.0   # peak-to-trough drop in flat cumulative units, positive magnitude
+    model: str = 'logreg'
     game_log: list[GameResult] = field(default_factory=list)
-
-
-def _moneyline_units(pick: str, actual: str, away_lines: list, home_lines: list) -> float:
-    """Return units won/lost for one game."""
-    if pick == 'No Pick' or actual == 'Tie':
-        return 0.0
-
-    picked_line = away_lines[0] if pick == 'Away' else home_lines[0]
-
-    if pick != actual:
-        return -1.0
-
-    # Correct pick — calculate payout
-    if picked_line.startswith('+'):
-        return int(picked_line[1:]) / 100.0
-    else:
-        return 100.0 / int(picked_line[1:])
 
 
 def _actual_result(scores_row: list) -> str:
@@ -115,31 +107,59 @@ def _date_keys_in_range(sport: str, start: str, end: str) -> list[str]:
         return sorted(filtered, key=int)
 
 
-def _training_keys_before(sport: str, test_key: str, window_days: int) -> list[str]:
+def _season_window_for(sport: str, test_date: datetime.date) -> tuple[datetime.date, datetime.date]:
     """
-    Return cached keys for sport within window_days before test_key.
-    For date-based sports, test_key is 'YYYY-MM-DD'.
-    For week-based sports, test_key is a week number string — we approximate
-    by returning the subset of cached week keys numerically before test_key.
+    Return (season_start, season_end) for the season that contains test_date.
+    Mirrors the cross-year handling in config.is_in_season().
+    """
+    cfg = config.SPORTS[sport]
+    mm_dd_start, mm_dd_end = cfg['season']
+    m_s, d_s = (int(x) for x in mm_dd_start.split('-'))
+    m_e, d_e = (int(x) for x in mm_dd_end.split('-'))
+
+    start = datetime.date(test_date.year, m_s, d_s)
+
+    if m_e < m_s:
+        # Cross-year season (e.g. NBA Oct-Jun, NFL Sep-Feb)
+        end = datetime.date(test_date.year + 1, m_e, d_e)
+        if test_date < start:
+            # Tail of the previous season (e.g. Jan playoffs)
+            start = datetime.date(test_date.year - 1, m_s, d_s)
+            end   = datetime.date(test_date.year,     m_e, d_e)
+    else:
+        end = datetime.date(test_date.year, m_e, d_e)
+
+    return start, end
+
+
+def _training_keys_in_season(sport: str, test_key: str) -> list[str]:
+    """
+    Return all cached keys for sport within the same season as test_key,
+    strictly before test_key. Walk-forward safe.
+
+    For date-based sports, test_key is 'YYYY-MM-DD' and the season window is
+    derived from config.SPORTS[sport]['season'].
+    For week-based sports, test_key is a week number string; the cache only
+    holds one season's worth of week keys (each save replaces prior weeks
+    with the same number), so we just return all earlier numeric weeks.
     """
     available = store.list_available(sport)
     cfg = config.SPORTS[sport]
 
     if cfg['date_type'] == 'date':
         test_d = datetime.date.fromisoformat(test_key)
-        cutoff = test_d - datetime.timedelta(days=window_days)
+        season_start, _ = _season_window_for(sport, test_d)
+        season_start_iso = season_start.strftime('%Y-%m-%d')
         return [
             k for k in available
-            if cutoff.strftime('%Y-%m-%d') <= k < test_key
+            if season_start_iso <= k < test_key
         ]
-    else:
-        test_week = int(test_key)
-        # Approximate: include up to window_days // 7 weeks before test week
-        weeks_back = max(1, window_days // 7)
-        return [
-            k for k in available
-            if k.isdigit() and (test_week - weeks_back) <= int(k) < test_week
-        ]
+
+    test_week = int(test_key)
+    return [
+        k for k in available
+        if k.isdigit() and int(k) < test_week
+    ]
 
 
 class Backtester:
@@ -148,21 +168,26 @@ class Backtester:
         sport: str,
         start: str,
         end: str,
-        training_window_days: int = 60,
+        model_type: str = 'logreg',
     ):
         self.sport = sport
         self.start = start
         self.end = end
-        self.training_window_days = training_window_days
+        self.model_type = model_type
+
+    def _empty_result(self) -> BacktestResult:
+        return BacktestResult(
+            sport=self.sport, start=self.start, end=self.end,
+            total_games=0, games_picked=0, correct_picks=0,
+            accuracy=0.0, total_units=0.0,
+            flat_units=0.0, kelly_units=0.0,
+            model=self.model_type,
+        )
 
     def run(self) -> BacktestResult:
         test_keys = _date_keys_in_range(self.sport, self.start, self.end)
         if not test_keys:
-            return BacktestResult(
-                sport=self.sport, start=self.start, end=self.end,
-                total_games=0, games_picked=0, correct_picks=0,
-                accuracy=0.0, total_units=0.0,
-            )
+            return self._empty_result()
 
         game_log: list[GameResult] = []
 
@@ -174,12 +199,12 @@ class Backtester:
                     'Run the daily runner to populate the cache first.'
                 )
 
-            # Build training set from cached data before this key
-            train_keys = _training_keys_before(self.sport, key, self.training_window_days)
+            # Build training set from cached data in the same season, before this key
+            train_keys = _training_keys_in_season(self.sport, key)
             frames = [store.load(self.sport, k) for k in train_keys]
             frames = [f for f in frames if f is not None]
 
-            engine = PickEngine(self.sport)
+            engine = PickEngine(self.sport, model_type=self.model_type)
             if frames:
                 historical = pd.concat(frames, ignore_index=True)
                 engine.train(historical)
@@ -195,15 +220,10 @@ class Backtester:
                 except IndexError:
                     actual = 'Tie'
 
-                units = _moneyline_units(
-                    pick_obj.pick, actual,
-                    pick_obj.away_lines, pick_obj.home_lines,
+                flat, kelly, _result = settle_pick(
+                    pick_obj.pick, actual, pick_obj.bet_line, pick_obj.unit_size,
                 )
-                correct = (
-                    pick_obj.pick != 'No Pick'
-                    and actual != 'Tie'
-                    and pick_obj.pick == actual
-                )
+                correct = _result == 'W'
 
                 game_log.append(GameResult(
                     game_index=idx,
@@ -211,7 +231,11 @@ class Backtester:
                     pick=pick_obj.pick,
                     actual=actual,
                     correct=correct,
-                    units=units,
+                    units=flat,
+                    kelly_units=kelly,
+                    bet_line=pick_obj.bet_line,
+                    unit_size=pick_obj.unit_size,
+                    ev=pick_obj.ev,
                     away_lines=pick_obj.away_lines,
                     home_lines=pick_obj.home_lines,
                 ))
@@ -220,7 +244,9 @@ class Backtester:
         games_picked = sum(1 for g in game_log if g.pick != 'No Pick' and g.actual != 'Tie')
         correct_picks = sum(1 for g in game_log if g.correct)
         accuracy = correct_picks / games_picked if games_picked > 0 else 0.0
-        total_units = sum(g.units for g in game_log)
+        flat_units = sum(g.units for g in game_log)
+        kelly_units = sum(g.kelly_units for g in game_log)
+        max_drawdown = _max_drawdown(g.units for g in game_log)
 
         return BacktestResult(
             sport=self.sport,
@@ -230,6 +256,29 @@ class Backtester:
             games_picked=games_picked,
             correct_picks=correct_picks,
             accuracy=accuracy,
-            total_units=total_units,
+            total_units=flat_units,
+            flat_units=flat_units,
+            kelly_units=kelly_units,
+            max_drawdown=max_drawdown,
+            model=self.model_type,
             game_log=game_log,
         )
+
+
+def _max_drawdown(unit_series) -> float:
+    """
+    Furthest the cumulative flat-units curve dips below the starting
+    bankroll of zero, returned as a positive magnitude. If the curve never
+    goes negative, drawdown is 0.0.
+
+    This intentionally measures absolute floor (worst red on the ledger),
+    not peak-to-trough — readers consistently interpret "max drawdown" on a
+    units chart as "how far below break-even did we get."
+    """
+    running = 0.0
+    worst = 0.0
+    for u in unit_series:
+        running += u
+        if running < worst:
+            worst = running
+    return abs(worst)

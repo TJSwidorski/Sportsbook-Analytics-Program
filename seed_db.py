@@ -1,7 +1,7 @@
 """
 One-shot cache seeder.
 
-Populates the SQLite cache (data/cache.db) with the two most recent seasons
+Populates the SQLite cache (data/cache.db) with the five most recent seasons
 for each sport (or a subset via flags). Run this once so the Naive Bayes
 training window and the backtester have history to chew on without making
 the website wait on a full scrape at startup.
@@ -43,14 +43,14 @@ def _season_window(sport: str, season_year: int) -> tuple[datetime.date, datetim
 def most_recent_seasons(
     sport: str,
     today: datetime.date,
-    count: int = 2,
+    count: int = 5,
 ) -> list[tuple[datetime.date, datetime.date, int]]:
     """
     Return up to `count` season windows (newest first) whose start is on or
     before `today`. Each entry is (start, end, season_year).
     """
     windows: list[tuple[datetime.date, datetime.date, int]] = []
-    for offset in range(0, 6):
+    for offset in range(0, count + 3):
         season_year = today.year - offset
         start, end = _season_window(sport, season_year)
         if start <= today:
@@ -65,7 +65,7 @@ def _pick_seasons(
     today: datetime.date,
     which: str,
 ) -> list[tuple[datetime.date, datetime.date, int]]:
-    windows = most_recent_seasons(sport, today, count=2)
+    windows = most_recent_seasons(sport, today, count=5)
     if which == 'current':
         return windows[:1]
     if which == 'previous':
@@ -120,9 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         '--seasons',
-        choices=('both', 'current', 'previous'),
-        default='both',
-        help='Which season(s) to seed relative to today',
+        choices=('all', 'both', 'current', 'previous'),
+        default='all',
+        help='Which season(s) to seed: all (last 5), current, or previous. "both" is a legacy alias for "all".',
     )
     parser.add_argument(
         '--delay',

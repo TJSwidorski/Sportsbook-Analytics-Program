@@ -1,3 +1,4 @@
+import json
 import time
 import requests
 from bs4 import BeautifulSoup
@@ -185,7 +186,20 @@ class NBAMoneyLineAPI(MoneyLineAPI):
 
 
 class NFLMoneyLineAPI(MoneyLineAPI):
-  """Money line parser for NFL. No player names in raw data."""
+  """
+  Money line parser for NFL. No player names in raw data.
+
+  Inherits the base clean_data/clean_scores. NFL's per-game score block uses
+  the same shape as NBA: AwayFinal, HomeFinal, [Q1triple..Q4triple],
+  AwayRecap, HomeRecap, 'XX%YY%', 'XX%', 'YY%' — anchored on the base
+  algorithm's '%' or '-' detector at i+2 from the recap.
+
+  NOTE: As of 2026-04, sportsbookreview.com returns an empty oddsTables for
+  every NFL URL variant we've tried (week, date, season, etc.) and the
+  Wayback Machine has no archived snapshots, so this parser cannot be
+  verified live right now. Re-run the cross-check against a real Sunday
+  slate once SBR's NFL archive is restored.
+  """
   pass
 
 
@@ -193,11 +207,26 @@ class NHLMoneyLineAPI(_PlayerNameMixin, MoneyLineAPI):
   """
   Money line parser for NHL.
 
-  Older SportsBook Review NHL data embedded starting goalie names inline with
-  odds. Later data dropped goalies. This parser always filters name-like tokens
-  so it handles both eras without configuration.
+  Older SBR NHL data embedded starting goalie names inline with odds AND
+  inside the score block; later data dropped them. _PlayerNameMixin filters
+  goalie tokens out of the odds stream.
+
+  For scores, we anchor on the per-game wager-percentage marker (e.g.
+  '27%73%') — same approach as MLB. The recap totals are the two digit
+  tokens immediately preceding it, so positions are stable regardless of
+  whether goalie names are present. Postponed games show '--' instead of a
+  '%' marker and are correctly skipped.
   """
-  pass
+  def clean_scores(self, scores_data):
+    scores = []
+    for i, token in enumerate(scores_data):
+      if token.count('%') != 2 or i < 2:
+        continue
+      away = scores_data[i - 2]
+      home = scores_data[i - 1]
+      if away.isdigit() and home.isdigit():
+        scores.append([away, home])
+    return scores
 
 
 class MLBMoneyLineAPI(_PlayerNameMixin, MoneyLineAPI):
@@ -236,9 +265,28 @@ class MLBMoneyLineAPI(_PlayerNameMixin, MoneyLineAPI):
 
 
 class MLSMoneyLineAPI(MoneyLineAPI):
-  """Money line parser for MLS (soccer). Score parser: TODO."""
+  """
+  Money line parser for MLS (soccer).
+
+  SBR's MLS score block emits seven tokens per game:
+
+      AwayTeam  AwayScore  HomeTeam  HomeScore  '--'  '-'  '-'
+
+  We anchor on the '--' marker that closes each game; the away/home scores
+  are at offsets i-3 and i-1. Note: unplayed games show as 0-0 the same as
+  a real 0-0 result — fine for past-date seeding/backtests, but callers
+  shouldn't train on rows from games that haven't kicked off yet.
+  """
   def clean_scores(self, scores_data):
-    return []
+    scores = []
+    for i, token in enumerate(scores_data):
+      if token != '--' or i < 3:
+        continue
+      away = scores_data[i - 3]
+      home = scores_data[i - 1]
+      if away.isdigit() and home.isdigit():
+        scores.append([away, home])
+    return scores
 
 
 class NCAAFMoneyLineAPI(MoneyLineAPI):
@@ -252,15 +300,66 @@ class NCAABMoneyLineAPI(MoneyLineAPI):
 
 
 class WNBAMoneyLineAPI(MoneyLineAPI):
-  """Money line parser for WNBA. Score parser: TODO."""
+  """
+  Money line parser for WNBA.
+
+  Per-game tokens emitted by SBR (after the 'Rot' / 'WAGERSOPENER' header):
+
+      AwayTeam  AwayScore  HomeTeam  HomeScore
+      [Q_concat Q_a Q_h] × 4 quarters
+      AwayRecap  HomeRecap
+      '--'  '-'  '-'
+
+  We anchor on the '--' marker that closes each game; the recap totals
+  immediately precede it, so away/home scores live at offsets i-2 and i-1.
+  """
   def clean_scores(self, scores_data):
-    return []
+    scores = []
+    for i, token in enumerate(scores_data):
+      if token != '--' or i < 2:
+        continue
+      away = scores_data[i - 2]
+      home = scores_data[i - 1]
+      if away.isdigit() and home.isdigit():
+        scores.append([away, home])
+    return scores
 
 
 class CFLMoneyLineAPI(MoneyLineAPI):
-  """Money line parser for CFL. Score parser: TODO."""
+  """
+  Money line parser for CFL.
+
+  SBR emits two layouts depending on the season; both end each game with the
+  '--' marker and put the home score immediately before it:
+
+      Long  (with quarter splits):
+          AwayTeam  AwayScore  HomeTeam  HomeScore
+          [Q_concat Q_a Q_h] × 4 quarters
+          AwayRecap  HomeRecap  '--'  '-'  '-'
+
+      Short (no splits, MLS-style):
+          AwayTeam  AwayScore  HomeTeam  HomeScore  '--'  '-'  '-'
+
+  Disambiguation: home score is always at i-1. If i-2 is also a digit it's
+  the away recap (long layout); otherwise it's the home team name and the
+  away score is at i-3 (short layout).
+  """
   def clean_scores(self, scores_data):
-    return []
+    scores = []
+    for i, token in enumerate(scores_data):
+      if token != '--' or i < 3:
+        continue
+      home = scores_data[i - 1]
+      if not home.isdigit():
+        continue
+      if scores_data[i - 2].isdigit():
+        away = scores_data[i - 2]
+      else:
+        away = scores_data[i - 3]
+        if not away.isdigit():
+          continue
+      scores.append([away, home])
+    return scores
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +444,10 @@ class SportsbookReviewAPI():
     self.df = bet_data.package()
     _mark("END   package")
 
+    _mark("BEGIN metadata")
+    self.df = self._attach_metadata(self.df, *self._extract_metadata())
+    _mark("END   metadata")
+
   def get_soup(self):
     # SBR blocks the default python-requests UA (hangs indefinitely), so we
     # masquerade as a browser. Timeout guards against network stalls.
@@ -373,6 +476,61 @@ class SportsbookReviewAPI():
       if text:
         scores.append(text)
     return scores
+
+  def _extract_metadata(self):
+    """
+    Parse __NEXT_DATA__ for team names, abbreviations, and ordered sportsbook
+    list. Returns (away_teams, home_teams, away_abbrs, home_abbrs, sportsbooks).
+
+    The four team lists align with the page's gameRows order — which matches
+    the fs-9 span order used by the existing odds parser. `sportsbooks` is the
+    table column ordering: ['Open', book1_name, ...] (the leading 'Open' column
+    accounts for the 7th odds slot per row that the fs-9 scrape captures).
+
+    Fail-soft: returns five empty lists on any shape mismatch so the caller can
+    still attach (empty) metadata without breaking the pipeline.
+    """
+    try:
+      tag = self.soup.find('script', id='__NEXT_DATA__')
+      if not tag or not tag.string:
+        return [], [], [], [], []
+      payload = json.loads(tag.string)
+      otm = payload['props']['pageProps']['oddsTables'][0]['oddsTableModel']
+      sportsbooks = ['Open'] + [b.get('name', '') for b in otm.get('sportsbooks') or []]
+      away_teams, home_teams, away_abbrs, home_abbrs = [], [], [], []
+      for row in otm.get('gameRows') or []:
+        gv = row.get('gameView') or {}
+        at = gv.get('awayTeam') or {}
+        ht = gv.get('homeTeam') or {}
+        away_teams.append(at.get('fullName') or at.get('name') or '')
+        home_teams.append(ht.get('fullName') or ht.get('name') or '')
+        away_abbrs.append((at.get('shortName') or '').upper())
+        home_abbrs.append((ht.get('shortName') or '').upper())
+      return away_teams, home_teams, away_abbrs, home_abbrs, sportsbooks
+    except (KeyError, IndexError, TypeError, ValueError):
+      return [], [], [], [], []
+
+  @staticmethod
+  def _attach_metadata(df, away_teams, home_teams, away_abbrs, home_abbrs, sportsbooks):
+    """Add Away/Home Team, Away/Home Abbr, and Sportsbooks columns to df.
+
+    Pads per-game lists to match len(df) so a partial NEXT_DATA payload still
+    produces a valid frame. Sportsbooks is denormalized per row so save/load
+    round-trips cleanly in store.py.
+    """
+    n = len(df)
+    def _pad(xs):
+      xs = list(xs)
+      if len(xs) < n:
+        xs = xs + [''] * (n - len(xs))
+      return xs[:n]
+    df = df.copy()
+    df['Away Team'] = _pad(away_teams)
+    df['Home Team'] = _pad(home_teams)
+    df['Away Abbr'] = _pad(away_abbrs)
+    df['Home Abbr'] = _pad(home_abbrs)
+    df['Sportsbooks'] = [list(sportsbooks) for _ in range(n)]
+    return df
 
   def return_data(self) -> pd.DataFrame:
     return self.df

@@ -64,6 +64,31 @@ def iter_cache_keys(
         day += datetime.timedelta(days=1)
 
 
+def refresh_today_and_tomorrow(delay_seconds: float = 0.5) -> None:
+    """
+    Force-refresh today's and tomorrow's slate for every in-season sport.
+
+    The gap-fill loop in prefetch_recent only fetches keys that aren't yet in
+    the cache. That means once today's row is written (even if the slate was
+    incomplete at fetch time, e.g. SBR hadn't listed all games yet), it stays
+    stuck until tomorrow rolls around. This pass runs separately and overwrites
+    today's and tomorrow's keys regardless of cache presence so the front-end
+    always sees the live SBR slate.
+    """
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    for sport in config.SPORTS:
+        for date_or_week, key in iter_cache_keys(sport, today, tomorrow):
+            try:
+                df = _fetch_live(sport, date_or_week)
+                store.save(sport, key, df)
+                print(f'[prefetch:refresh] {sport}/{key}: refreshed {len(df)} rows')
+            except Exception as exc:
+                print(f'[prefetch:refresh] {sport}/{key}: FAILED — {type(exc).__name__}: {exc}')
+            if delay_seconds:
+                time.sleep(delay_seconds)
+
+
 def prefetch_recent(
     fallback_days_back: int = 60,
     delay_seconds: float = 0.5,
@@ -71,9 +96,13 @@ def prefetch_recent(
     """
     Walk each sport from MAX(cached_date)+1 (or today - fallback_days_back
     when nothing is cached) up to today, fetching missing entries.
+
+    Also force-refreshes today's and tomorrow's slate up front so a stale row
+    from earlier in the day doesn't undercount the live game list.
     """
     print(f'[prefetch] starting — fallback_window={fallback_days_back} days')
     overall_start = time.time()
+    refresh_today_and_tomorrow(delay_seconds=delay_seconds)
     today = datetime.date.today()
 
     for sport in config.SPORTS:
@@ -112,6 +141,36 @@ def prefetch_recent(
         )
 
     print(f'[prefetch] all sports done in {time.time() - overall_start:.1f}s')
+
+    _refresh_rolling_backtests()
+
+
+def _refresh_rolling_backtests() -> None:
+    """
+    Recompute the rolling 7/30/90-day backtests for every in-season sport.
+    Cheap when rows for today already exist (skipped via `rolling_computed_today`).
+    Imported lazily so prefetch can run even if rolling_backtest fails to import.
+    """
+    try:
+        from rolling_backtest import compute_all_rolling
+    except Exception as exc:  # pragma: no cover — defensive
+        print(f'[prefetch] rolling backtest import failed: {exc}')
+        return
+
+    for window in (7, 30, 90):
+        started = time.time()
+        try:
+            statuses = compute_all_rolling(window_days=window)
+        except Exception as exc:  # pragma: no cover — defensive
+            print(f'[prefetch] rolling-{window}d FAILED — {type(exc).__name__}: {exc}')
+            continue
+        computed = sum(1 for v in statuses.values() if v == 'computed')
+        cached = sum(1 for v in statuses.values() if v == 'cached')
+        skipped = len(statuses) - computed - cached
+        print(
+            f'[prefetch] rolling-{window}d: computed={computed} cached={cached} '
+            f'skipped={skipped} in {time.time() - started:.1f}s'
+        )
 
 
 def start_background_prefetch(fallback_days_back: int = 60) -> threading.Thread:

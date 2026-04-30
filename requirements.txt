@@ -14,6 +14,7 @@ tensorflow
 # API server
 flask
 flask-cors
+waitress
 
 # Testing
 pytest

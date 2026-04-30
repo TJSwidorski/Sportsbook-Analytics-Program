@@ -71,7 +71,7 @@ class TestAllSportsInstantiate(unittest.TestCase):
         sports.WNBA('2024-07-15')
 
     def test_cfl(self):
-        sports.CFL(5)
+        sports.CFL('2024-08-17')
 
 
 class TestDateBasedURLFormat(unittest.TestCase):
@@ -98,6 +98,9 @@ class TestDateBasedURLFormat(unittest.TestCase):
     def test_wnba_date_in_url(self):
         self._assert_date_in_url(sports.WNBA('2024-07-15').money_line, '2024-07-15')
 
+    def test_cfl_date_in_url(self):
+        self._assert_date_in_url(sports.CFL('2024-08-17').money_line, '2024-08-17')
+
 
 class TestWeekBasedURLFormat(unittest.TestCase):
     """Week-based sports must embed the week number in their money-line URL."""
@@ -111,8 +114,6 @@ class TestWeekBasedURLFormat(unittest.TestCase):
     def test_ncaaf_week_in_url(self):
         self._assert_week_in_url(sports.NCAAF(5).money_line, 5)
 
-    def test_cfl_week_in_url(self):
-        self._assert_week_in_url(sports.CFL(5).money_line, 5)
 
 
 class TestNCAAFHalvesBugRegression(unittest.TestCase):
@@ -152,7 +153,7 @@ class TestHalvesURLs(unittest.TestCase):
         self.assertNotEqual(nba.h1_money_line, nba.h2_money_line)
 
     def test_cfl_halves_distinct(self):
-        cfl = sports.CFL(5)
+        cfl = sports.CFL('2024-08-17')
         self.assertNotEqual(cfl.h1_money_line, cfl.h2_money_line)
 
 

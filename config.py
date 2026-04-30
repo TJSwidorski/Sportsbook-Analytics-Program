@@ -21,7 +21,7 @@ SPORTS: dict[str, dict] = {
     'ncaaf': {'date_type': 'week', 'season': ('08-20', '01-15')},
     'ncaab': {'date_type': 'date', 'season': ('11-01', '04-10')},
     'wnba':  {'date_type': 'date', 'season': ('05-01', '10-20')},
-    'cfl':   {'date_type': 'week', 'season': ('06-01', '11-30')},
+    'cfl':   {'date_type': 'date', 'season': ('06-01', '11-30')},
 }
 
 # First game date of Week 1 for each week-based sport and season year.
@@ -37,11 +37,6 @@ _WEEK1_STARTS: dict[str, dict[int, date]] = {
         2023: date(2023, 8, 26),
         2024: date(2024, 8, 24),
         2025: date(2025, 8, 23),
-    },
-    'cfl': {
-        2023: date(2023, 6, 8),
-        2024: date(2024, 6, 6),
-        2025: date(2025, 6, 5),
     },
 }
 
@@ -66,6 +61,45 @@ def is_in_season(sport: str, d: date) -> bool:
         end = date(d.year, m_e, d_e)
 
     return start <= d <= end
+
+
+def season_window(sport: str, season_year: int) -> tuple[date, date]:
+    """
+    Return (start, end) calendar dates for the season of `sport` that *starts*
+    in `season_year`. Cross-year seasons (NBA Oct-Jun, NFL Sep-Feb) end in
+    `season_year + 1`.
+
+    The `season_year` convention matches `_WEEK1_STARTS` and the rest of the
+    pipeline: it is always the calendar year in which the regular season
+    begins, even when most of the schedule plays out in the following year.
+    """
+    mm_dd_start, mm_dd_end = SPORTS[sport]['season']
+    m_s, d_s = (int(x) for x in mm_dd_start.split('-'))
+    m_e, d_e = (int(x) for x in mm_dd_end.split('-'))
+    start = date(season_year, m_s, d_s)
+    end_year = season_year + 1 if m_e < m_s else season_year
+    end = date(end_year, m_e, d_e)
+    return start, end
+
+
+def last_completed_season(
+    sport: str,
+    today: date | None = None,
+    lookback_years: int = 6,
+) -> tuple[int, date, date] | None:
+    """
+    Return (season_year, start, end) for the most recent season whose end
+    date is strictly before `today`. Used by backtest_history.py to pick a
+    stable, fully-played window per sport regardless of where in the calendar
+    we are. Returns None if no completed season is found within `lookback_years`.
+    """
+    today = today or date.today()
+    for offset in range(0, lookback_years):
+        season_year = today.year - offset
+        start, end = season_window(sport, season_year)
+        if end < today:
+            return season_year, start, end
+    return None
 
 
 def date_to_week(sport: str, d: date) -> int | None:
