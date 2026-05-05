@@ -50,9 +50,10 @@ cd web && npm run lint
 cd web && npm run build
 ```
 
-**Seed the SQLite cache (one-shot bulk loader for the last five seasons):**
+**Seed the SQLite cache (one-shot bulk loader):**
 ```bash
-python seed_db.py                              # all sports, last 5 seasons
+python seed_db.py                              # all sports, last 7 seasons (default)
+python seed_db.py --lookback 7                 # explicit lookback (increase for more history)
 python seed_db.py --sport nba,nhl              # subset
 python seed_db.py --seasons previous --force   # re-fetch only previous season
 ```
@@ -75,21 +76,30 @@ manual refreshes.
 
 **Train the `logreg_v2` meta-gate (offline; pickled to `data/meta_models/`):**
 ```bash
-python train_meta_model.py --walk-forward --force         # RECOMMENDED: one gate per holdout season + a live gate
-python train_meta_model.py                                # single gate, holdout = most recent completed season
-python train_meta_model.py --holdout-season 2024 --force  # single gate, fixed holdout for every sport
-python train_meta_model.py --no-holdout --force           # diagnostics only — every season in training
+python train_meta_model.py --walk-forward --force                    # RECOMMENDED
+python train_meta_model.py --walk-forward --target kelly --force     # kelly units target (default)
+python train_meta_model.py --walk-forward --target flat --force      # flat units target (original)
+python train_meta_model.py                                           # single gate, default holdout
+python train_meta_model.py --holdout-season 2024 --force             # single gate, fixed holdout
+python train_meta_model.py --no-holdout --force                      # diagnostics only
 ```
-Use `--walk-forward` when you intend to evaluate via `backtest_history.py` or
-`rolling_backtest.py`. It builds the corpus once, then fits one gate per
-holdout season Y (saved as `logreg_v2.<Y>.pkl`, each excluding Y from
-training) plus a "live" gate trained on every completed season (saved as
-`logreg_v2.pkl`). The Backtester loads the right per-season gate
-automatically: completed seasons evaluate against their leak-free
-season-keyed gate; the current/in-progress season falls back to the live
-gate (also leak-free, since the trainer never includes incomplete seasons).
-Re-run at the end of each sport's season; the Flask API picks new pickles
-up on the next process restart.
+`--target kelly` (default) trains the gate to predict kelly-weighted realized units.
+`--target flat` trains it to predict flat ±1 unit outcomes (the original behavior).
+Each target uses a separate corpus cache (`logreg_nba_2023_kelly.pkl` vs `_flat.pkl`) so
+switching targets does not require `--force`. Walk-forward fits one per-season gate plus a
+live gate; the Backtester loads the right one automatically.
+
+**Select and save per-sport, per-season thresholds (bias-free):**
+```bash
+python optimize_threshold.py --walk-forward --objective sharpe --save          # RECOMMENDED
+python optimize_threshold.py --walk-forward --objective sharpe --target kelly  # explicit target
+python optimize_threshold.py --test-holdout 1 --objective sharpe               # holdout validation only
+python optimize_threshold.py                                                    # show grid, no save
+```
+`--walk-forward` is the bias-free option: for each season Y the threshold is selected using
+only corpus rows from seasons strictly before Y. Saves a nested JSON to
+`data/meta_models/thresholds.json`; `config.py` and `PickEngine` resolve the per-season
+threshold automatically during backtests and the live threshold for daily picks.
 
 ## Architecture
 

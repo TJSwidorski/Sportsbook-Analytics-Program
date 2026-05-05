@@ -64,8 +64,9 @@ def _pick_seasons(
     sport: str,
     today: datetime.date,
     which: str,
+    lookback: int = 7,
 ) -> list[tuple[datetime.date, datetime.date, int]]:
-    windows = most_recent_seasons(sport, today, count=5)
+    windows = most_recent_seasons(sport, today, count=lookback)
     if which == 'current':
         return windows[:1]
     if which == 'previous':
@@ -79,9 +80,10 @@ def seed_sport(
     delay: float,
     force: bool,
     today: datetime.date,
+    lookback: int = 7,
 ) -> tuple[int, int, int]:
     """Seed one sport; returns (fetched, skipped, errors)."""
-    windows = _pick_seasons(sport, today, seasons)
+    windows = _pick_seasons(sport, today, seasons, lookback)
     if not windows:
         print(f'[seed] {sport}: no matching seasons — skipping')
         return 0, 0, 0
@@ -135,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         action='store_true',
         help='Re-fetch keys that are already cached',
     )
+    parser.add_argument(
+        '--lookback',
+        type=int,
+        default=7,
+        metavar='N',
+        help='Number of seasons to seed per sport (default: 7). Increase for more historical data.',
+    )
     args = parser.parse_args(argv)
 
     if args.sport:
@@ -149,14 +158,14 @@ def main(argv: list[str] | None = None) -> int:
     overall_start = time.time()
     print(
         f'[seed] target sports={sports} seasons={args.seasons} '
-        f'delay={args.delay}s force={args.force}'
+        f'lookback={args.lookback} delay={args.delay}s force={args.force}'
     )
 
     totals = {'fetched': 0, 'skipped': 0, 'errors': 0}
     for sport in sports:
         sport_start = time.time()
         fetched, skipped, errors = seed_sport(
-            sport, args.seasons, args.delay, args.force, today,
+            sport, args.seasons, args.delay, args.force, today, args.lookback,
         )
         totals['fetched'] += fetched
         totals['skipped'] += skipped

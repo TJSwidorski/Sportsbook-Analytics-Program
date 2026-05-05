@@ -80,11 +80,24 @@ class PickEngine:
         """
         self.sport = sport
         self.model_type = model_type
-        # For logreg_v2, prefer the per-sport threshold from config over the
-        # global meta_threshold argument so live picks, backtests, and rolling
-        # backtests all use the same cutoffs.
-        _pst = config.PER_SPORT_THRESHOLDS if model_type == 'logreg_v2' else {}
-        self.meta_threshold = _pst.get(sport, meta_threshold)
+        if model_type == 'logreg_v2':
+            # Walk-forward threshold resolution — always out-of-sample:
+            #   - Backtest (season_year set): use the threshold selected from
+            #     seasons strictly before season_year. If no prior-season data
+            #     existed when the threshold was computed, fall back to T=0.0
+            #     (meta-gate natural signal, no lookahead bias).
+            #   - Live picks (season_year=None): use the sport-level live
+            #     threshold trained on all completed seasons.
+            _season_thresholds = config.PER_SPORT_SEASON_THRESHOLDS.get(sport, {})
+            if season_year is not None:
+                if season_year in _season_thresholds:
+                    self.meta_threshold = _season_thresholds[season_year]
+                else:
+                    self.meta_threshold = 0.0
+            else:
+                self.meta_threshold = config.PER_SPORT_THRESHOLDS.get(sport, meta_threshold)
+        else:
+            self.meta_threshold = meta_threshold
         self.season_year = season_year
         self.current_date = current_date
         self._model = build_model(model_type)

@@ -368,15 +368,20 @@ class TestPickEngineMetaGate(unittest.TestCase):
         self.assertIsNotNone(p.bet_line)
 
     def test_meta_threshold_respected(self):
-        # Predicted=0.05; threshold=0.10 → blocked
-        blocked = self._logreg_v2_engine_with_fake_gate(predicted_value=0.05, threshold=0.10)
-        self.assertEqual(blocked.predict_all(_games_df())[0].pick, 'No Pick')
-        # Predicted=0.05; threshold=0.0 → allowed (strict >)
-        allowed = self._logreg_v2_engine_with_fake_gate(predicted_value=0.05, threshold=0.0)
-        self.assertIn(allowed.predict_all(_games_df())[0].pick, ('Away', 'Home'))
-        # Predicted=0.0; threshold=0.0 → blocked (strict >, not >=)
-        edge = self._logreg_v2_engine_with_fake_gate(predicted_value=0.0, threshold=0.0)
-        self.assertEqual(edge.predict_all(_games_df())[0].pick, 'No Pick')
+        # Patch config so the constructor arg is the only threshold source.
+        # (Without patching, thresholds.json overrides the constructor arg for logreg_v2.)
+        import config
+        with patch.object(config, 'PER_SPORT_THRESHOLDS', {}), \
+             patch.object(config, 'PER_SPORT_SEASON_THRESHOLDS', {}):
+            # Predicted=0.05; threshold=0.10 → blocked
+            blocked = self._logreg_v2_engine_with_fake_gate(predicted_value=0.05, threshold=0.10)
+            self.assertEqual(blocked.predict_all(_games_df())[0].pick, 'No Pick')
+            # Predicted=0.05; threshold=0.0 → allowed (strict >)
+            allowed = self._logreg_v2_engine_with_fake_gate(predicted_value=0.05, threshold=0.0)
+            self.assertIn(allowed.predict_all(_games_df())[0].pick, ('Away', 'Home'))
+            # Predicted=0.0; threshold=0.0 → blocked (strict >, not >=)
+            edge = self._logreg_v2_engine_with_fake_gate(predicted_value=0.0, threshold=0.0)
+            self.assertEqual(edge.predict_all(_games_df())[0].pick, 'No Pick')
 
     def test_meta_gate_can_override_negative_ev(self):
         """The meta-gate replaces (not stacks atop) the EV>=0 rule.

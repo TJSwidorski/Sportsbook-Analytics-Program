@@ -16,7 +16,16 @@ Usage:
     python optimize_threshold.py --objective sharpe            # minimize variance
     python optimize_threshold.py --test-holdout 1 --objective sharpe
     python optimize_threshold.py --test-holdout 1 --objective sharpe --save
+    python optimize_threshold.py --walk-forward --objective sharpe --save
     python optimize_threshold.py --name logreg_v2             # default gate name
+
+Walk-forward mode (--walk-forward) is the bias-free option: for each season Y, the
+threshold is selected using only corpus rows from seasons strictly before Y. The saved
+thresholds.json uses a nested format:
+    {sport: {"live": T, "seasons": {year: T, ...}}, ...}
+PickEngine loads the per-season threshold when season_year is known (backtests), and
+the live threshold for daily picks. Seasons with no prior data receive T=0.0 (meta-gate
+natural signal only, no bias from future seasons).
 """
 
 from __future__ import annotations
@@ -43,8 +52,8 @@ _THRESHOLDS_JSON_PATH = os.path.join(os.path.dirname(__file__), 'data', 'meta_mo
 _Row = tuple[str, int, np.ndarray, float, float]
 
 
-def _load_corpus(base_model: str, sport: str, season_year: int) -> list[tuple[np.ndarray, float]] | None:
-    path = _corpus_cache_path(base_model, sport, season_year)
+def _load_corpus(base_model: str, sport: str, season_year: int, target: str = 'flat') -> list[tuple[np.ndarray, float]] | None:
+    path = _corpus_cache_path(base_model, sport, season_year, target)
     if not os.path.exists(path):
         return None
     with open(path, 'rb') as f:
@@ -336,6 +345,70 @@ def _print_test_results(
                 print(f'  {sport}/{sy}  (T={t:.3f}):   picks={n:>4}   units={total:>+8.2f}')
 
 
+def _compute_walk_forward_thresholds(
+    all_data: list[_Row],
+    sports: list[str],
+    thresholds: list[float],
+    min_picks: int,
+    min_picks_per_season: int,
+    objective: str,
+) -> dict[str, dict]:
+    """
+    For each (sport, season Y): compute best threshold using ONLY rows from
+    seasons strictly before Y. The result is fully out-of-sample — no season
+    ever contributes to its own threshold selection.
+
+    Returns: {sport: {"live": float, "seasons": {season_year: float}}}
+    """
+    result: dict[str, dict] = {}
+
+    for sport in sports:
+        sport_data = [r for r in all_data if r[0] == sport]
+        if not sport_data:
+            continue
+
+        seasons = sorted(set(r[1] for r in sport_data))
+        per_season: dict[int, float] = {}
+
+        for season_y in seasons:
+            prior_data = [r for r in sport_data if r[1] < season_y]
+            if len(prior_data) < min_picks:
+                # Not enough prior data for meaningful threshold selection.
+                # This season will fall back to T=0.0 in PickEngine.
+                continue
+
+            best_t_upc, best_t_sharpe, best_t_units = _compute_best_thresholds(
+                prior_data, thresholds, min_picks=min_picks,
+                min_picks_per_season=min_picks_per_season, sport_filter=None,
+            )
+
+            chosen = {'sharpe': best_t_sharpe, 'upc': best_t_upc, 'units': best_t_units}.get(
+                objective
+            )
+            if chosen is None:
+                chosen = best_t_upc
+            if chosen is None:
+                continue
+            per_season[season_y] = chosen
+
+        # Live threshold: use all seasons (for daily picks, not backtests).
+        best_t_upc, best_t_sharpe, best_t_units = _compute_best_thresholds(
+            sport_data, thresholds, min_picks=min_picks,
+            min_picks_per_season=min_picks_per_season, sport_filter=None,
+        )
+        chosen_live = {'sharpe': best_t_sharpe, 'upc': best_t_upc, 'units': best_t_units}.get(
+            objective
+        )
+        if chosen_live is None:
+            chosen_live = best_t_upc
+        if chosen_live is None:
+            chosen_live = 0.0
+
+        result[sport] = {'live': float(chosen_live), 'seasons': per_season}
+
+    return result
+
+
 def run(
     gate_name: str,
     base_model: str,
@@ -344,21 +417,24 @@ def run(
     min_picks_per_season: int = 2,
     n_holdout: int = 0,
     save: bool = False,
+    target: str = 'kelly',
+    walk_forward: bool = False,
 ) -> None:
     all_data: list[_Row] = []
 
-    print(f'[optimize] Loading corpus cache from {_CORPUS_CACHE_DIR}')
+    print(f'[optimize] Loading corpus cache from {_CORPUS_CACHE_DIR}  (target={target})')
     for sport in sports:
         for fname in os.listdir(_CORPUS_CACHE_DIR):
             prefix = f'{base_model}_{sport}_'
-            if not fname.startswith(prefix) or not fname.endswith('.pkl'):
+            suffix = f'_{target}.pkl'
+            if not fname.startswith(prefix) or not fname.endswith(suffix):
                 continue
             try:
-                season_year = int(fname[len(prefix):-4])
+                season_year = int(fname[len(prefix):-len(suffix)])
             except ValueError:
                 continue
 
-            rows = _load_corpus(base_model, sport, season_year)
+            rows = _load_corpus(base_model, sport, season_year, target)
             if not rows:
                 continue
 
@@ -534,11 +610,51 @@ def run(
             primary_objective=objective,
         )
 
+    # --- Walk-forward threshold computation ---
+    wf_thresholds: dict[str, dict] = {}
+    if walk_forward:
+        _MIN_PICKS_WF = 30
+        print('\n' + '=' * 90)
+        print(f'WALK-FORWARD THRESHOLD SELECTION  (objective={objective.upper()}, min_picks={_MIN_PICKS_WF})')
+        print('For each season Y: threshold selected using ONLY seasons before Y (no lookahead).')
+        wf_thresholds = _compute_walk_forward_thresholds(
+            all_data=data,
+            sports=sports,
+            thresholds=_THRESHOLDS,
+            min_picks=_MIN_PICKS_WF,
+            min_picks_per_season=min_picks_per_season,
+            objective=objective,
+        )
+        for sport, td in sorted(wf_thresholds.items()):
+            season_str = ', '.join(f'{y}→T={t:.3f}' for y, t in sorted(td['seasons'].items()))
+            no_prior_seasons = sorted(
+                sy for sy in set(r[1] for r in data if r[0] == sport)
+                if sy not in td['seasons']
+            )
+            fallback_str = f'  [T=0.0 for {no_prior_seasons} — no prior data]' if no_prior_seasons else ''
+            print(f'  {sport:>6}: live=T={td["live"]:.3f}  per-season: {season_str}{fallback_str}')
+
     # --- Save thresholds ---
     if save:
-        payload: dict = dict(sport_thresholds)
+        if walk_forward:
+            # Nested format: {sport: {"live": T, "seasons": {year: T}}}
+            payload: dict = {
+                sport: {
+                    'live': td['live'],
+                    'seasons': {str(y): t for y, t in td['seasons'].items()},
+                }
+                for sport, td in wf_thresholds.items()
+            }
+            meta_mode = 'walk_forward'
+        else:
+            # Flat format: {sport: T}
+            payload = dict(sport_thresholds)
+            meta_mode = 'flat'
+
         payload['_meta'] = {
+            'mode': meta_mode,
             'objective': objective,
+            'target': target,
             'test_holdout': n_holdout,
             'saved_at': datetime.datetime.now().isoformat(timespec='seconds'),
             'train_rows': len(train_data),
@@ -573,6 +689,19 @@ def main(argv: list[str] | None = None) -> int:
         '--save', action='store_true', default=False,
         help=f'Write per-sport thresholds to {_THRESHOLDS_JSON_PATH} for use by the live pipeline.',
     )
+    parser.add_argument(
+        '--target', choices=['flat', 'kelly'], default='kelly',
+        help='Corpus target to load: "flat" = ±1 unit, "kelly" = kelly-weighted (default: kelly).',
+    )
+    parser.add_argument(
+        '--walk-forward', action='store_true', default=False, dest='walk_forward',
+        help=(
+            'Compute per-season thresholds without lookahead: for each season Y the threshold '
+            'is selected using only corpus rows from seasons strictly before Y. '
+            'The saved JSON uses a nested format understood by config.py and PickEngine. '
+            'Recommended when --save is used.'
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.sport:
@@ -596,6 +725,8 @@ def main(argv: list[str] | None = None) -> int:
         min_picks_per_season=args.min_seasons,
         n_holdout=args.test_holdout,
         save=args.save,
+        target=args.target,
+        walk_forward=args.walk_forward,
     )
     return 0
 

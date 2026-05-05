@@ -133,17 +133,48 @@ def date_to_week(sport: str, d: date) -> int | None:
     return delta // 7 + 1
 
 
-def _load_per_sport_thresholds() -> dict[str, float]:
-    """Load per-sport meta-gate thresholds from thresholds.json if it exists."""
+def _load_per_sport_thresholds() -> tuple[dict[str, float], dict[str, dict[int, float]]]:
+    """
+    Load per-sport meta-gate thresholds from thresholds.json.
+
+    Handles two JSON formats:
+      Flat (old):   {sport: float, ...}
+      Nested (new): {sport: {"live": float, "seasons": {year_str: float}}, ...}
+
+    Returns:
+      live_thresholds       — {sport: float} for daily picks (season_year=None)
+      per_season_thresholds — {sport: {season_year_int: float}} for backtests
+    """
     path = _os.path.join(_os.path.dirname(__file__), 'data', 'meta_models', 'thresholds.json')
     if not _os.path.exists(path):
-        return {}
+        return {}, {}
     with open(path) as f:
         raw = _json.load(f)
-    return {k: float(v) for k, v in raw.items() if not k.startswith('_')}
+
+    live: dict[str, float] = {}
+    per_season: dict[str, dict[int, float]] = {}
+
+    for k, v in raw.items():
+        if k.startswith('_'):
+            continue
+        if isinstance(v, (int, float)):
+            live[k] = float(v)
+        elif isinstance(v, dict):
+            if 'live' in v:
+                live[k] = float(v['live'])
+            if 'seasons' in v and isinstance(v['seasons'], dict):
+                per_season[k] = {int(yr): float(t) for yr, t in v['seasons'].items()}
+
+    return live, per_season
 
 
-# Per-sport meta-gate thresholds for logreg_v2, loaded from
-# data/meta_models/thresholds.json (written by optimize_threshold.py --save).
-# Falls back to {} (no per-sport override) when the file doesn't exist yet.
-PER_SPORT_THRESHOLDS: dict[str, float] = _load_per_sport_thresholds()
+_PER_SPORT_THRESHOLDS, _PER_SPORT_SEASON_THRESHOLDS = _load_per_sport_thresholds()
+
+# Live threshold per sport — used for daily picks (no season context).
+# Loaded once at import from data/meta_models/thresholds.json.
+PER_SPORT_THRESHOLDS: dict[str, float] = _PER_SPORT_THRESHOLDS
+
+# Per-season threshold — used by Backtester/PickEngine when season_year is known.
+# For season Y: threshold was selected using only seasons before Y (no lookahead).
+# Seasons not present fall back to T=0.0 in PickEngine (not the live threshold).
+PER_SPORT_SEASON_THRESHOLDS: dict[str, dict[int, float]] = _PER_SPORT_SEASON_THRESHOLDS

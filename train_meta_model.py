@@ -80,8 +80,8 @@ _CORPUS_CACHE_DIR = os.path.join(
 )
 
 
-def _corpus_cache_path(base_model: str, sport: str, season_year: int) -> str:
-    return os.path.join(_CORPUS_CACHE_DIR, f'{base_model}_{sport}_{season_year}.pkl')
+def _corpus_cache_path(base_model: str, sport: str, season_year: int, target: str = 'flat') -> str:
+    return os.path.join(_CORPUS_CACHE_DIR, f'{base_model}_{sport}_{season_year}_{target}.pkl')
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +96,7 @@ def _backtest_season(
     base_model: str,
     use_cache: bool,
     force_recompute: bool,
+    target: str = 'flat',
 ) -> tuple[str, int, list[tuple[np.ndarray, float]], int, int]:
     """
     Backtest one (sport, season) pair and return corpus rows.
@@ -103,8 +104,9 @@ def _backtest_season(
     Returns (sport, season_year, rows, total_games, kept) where:
       - rows is [(feature_vector, realized_units), ...]
       - total_games == -1 signals a cache hit (elapsed not meaningful)
+      - target: 'flat' = ±1 unit bet, 'kelly' = kelly-weighted units
     """
-    cache_path = _corpus_cache_path(base_model, sport, season_year)
+    cache_path = _corpus_cache_path(base_model, sport, season_year, target)
     if use_cache and not force_recompute and os.path.exists(cache_path):
         try:
             with open(cache_path, 'rb') as f:
@@ -122,7 +124,8 @@ def _backtest_season(
     rows: list[tuple[np.ndarray, float]] = []
     for g in result.game_log:
         if _eligible(g):
-            rows.append((feature_vector(_row_to_candidate(g, sport, season_year)), float(g.units)))
+            realized = float(g.kelly_units) if target == 'kelly' else float(g.units)
+            rows.append((feature_vector(_row_to_candidate(g, sport, season_year)), realized))
 
     if use_cache:
         os.makedirs(_CORPUS_CACHE_DIR, exist_ok=True)
@@ -186,6 +189,7 @@ def build_corpus(
     workers: int = 1,
     use_cache: bool = True,
     force: bool = False,
+    target: str = 'flat',
 ) -> tuple[
     np.ndarray, np.ndarray, list[str], list[int], dict[str, int], dict[str, int | None],
 ]:
@@ -265,7 +269,7 @@ def build_corpus(
                 f = pool.submit(
                     _backtest_season,
                     sport, season_year, start_iso, end_iso,
-                    base_model, use_cache, force,
+                    base_model, use_cache, force, target,
                 )
                 futures[f] = (sport, season_year)
             for future in as_completed(futures):
@@ -284,7 +288,7 @@ def build_corpus(
             t0 = time.time()
             sp, sy, rows, total_games, kept = _backtest_season(
                 sport, season_year, start_iso, end_iso,
-                base_model, use_cache, force,
+                base_model, use_cache, force, target,
             )
             elapsed = time.time() - t0
             if total_games == -1:
@@ -464,6 +468,16 @@ def main(argv: list[str] | None = None) -> int:
             'data/meta_models/corpus_cache/ so re-runs are instant.'
         ),
     )
+    parser.add_argument(
+        '--target', choices=['flat', 'kelly'], default='kelly',
+        help=(
+            'Prediction target for the meta-gate regressor: '
+            '"flat" = ±1 unit bet (original), '
+            '"kelly" = kelly-weighted units (default). '
+            'Each target uses a separate corpus cache so switching targets '
+            'does not require --force.'
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.sport:
@@ -500,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     print(
-        f'[train_meta] base_model={args.base_model} sports={sports} '
+        f'[train_meta] base_model={args.base_model} target={args.target} sports={sports} '
         f'mode={"walk-forward" if args.walk_forward else "single-gate"} '
         f'holdout_season={args.holdout_season} '
         f'no_holdout={args.no_holdout} rebalance={not args.no_rebalance}'
@@ -530,6 +544,7 @@ def _run_single_gate(
         workers=args.workers,
         use_cache=use_cache,
         force=args.force,
+        target=args.target,
     )
 
     if len(y) == 0:
@@ -586,6 +601,7 @@ def _run_walk_forward(
         workers=args.workers,
         use_cache=use_cache,
         force=args.force,
+        target=args.target,
     )
 
     if len(y) == 0:
