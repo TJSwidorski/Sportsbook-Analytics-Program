@@ -93,7 +93,7 @@ def seed_sport(
         clamp_end = min(end, today)
         print(
             f'[seed] {sport} season {season_year}: '
-            f'{start} → {clamp_end} '
+            f'{start} -> {clamp_end} '
             f'(season end {end})'
         )
         for date_or_week, key in iter_cache_keys(sport, start, clamp_end):
