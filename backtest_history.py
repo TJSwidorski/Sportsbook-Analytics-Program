@@ -89,7 +89,7 @@ def aggregate_one(
     if not force and (sport, season_year) in existing:
         return False, f'{sport} season {season_year}: already aggregated (skip-existing)'
 
-    print(f'[history] {sport} season {season_year}: backtesting {start} → {end} ({model})')
+    print(f'[history] {sport} season {season_year}: backtesting {start} -> {end} ({model})')
     started = time.time()
     result = Backtester(
         sport,
@@ -212,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
 
     elapsed = time.time() - overall
     print(
-        f'[history] done in {elapsed:.1f}s — '
+        f'[history] done in {elapsed:.1f}s -- '
         f'wrote={successes}, skipped={skips}, errors={errors}'
     )
     return 0 if errors == 0 else 1

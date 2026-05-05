@@ -44,6 +44,9 @@ class GameResult:
     ev: float | None        # EV at the time of pick
     away_lines: list
     home_lines: list
+    confidence: float | None = None     # P(picked side wins) from the base model
+    home_prob: float | None = None      # P(home wins) from the base model
+    predicted_units: float | None = None  # meta-gate output, None when no gate ran
 
 
 @dataclass
@@ -132,6 +135,32 @@ def _season_window_for(sport: str, test_date: datetime.date) -> tuple[datetime.d
     return start, end
 
 
+def _season_year_for_key(
+    sport: str,
+    test_key: str,
+    fallback_date: datetime.date,
+) -> int:
+    """
+    Return the season_year (per `config.season_window` convention: the
+    calendar year the regular season begins) for a given test_key.
+
+    Date-based sports parse the key directly. Week-based sports have no
+    date in the key, so we fall back to the date the caller passed in
+    (typically `Backtester.start` — week-based caches only ever hold one
+    season's weeks at a time).
+    """
+    cfg = config.SPORTS[sport]
+    if cfg['date_type'] == 'date':
+        try:
+            d = datetime.date.fromisoformat(test_key)
+        except ValueError:
+            d = fallback_date
+    else:
+        d = fallback_date
+    season_start, _ = _season_window_for(sport, d)
+    return season_start.year
+
+
 def _training_keys_in_season(sport: str, test_key: str) -> list[str]:
     """
     Return all cached keys for sport within the same season as test_key,
@@ -169,11 +198,13 @@ class Backtester:
         start: str,
         end: str,
         model_type: str = 'logreg',
+        meta_threshold: float = 0.0,
     ):
         self.sport = sport
         self.start = start
         self.end = end
         self.model_type = model_type
+        self.meta_threshold = meta_threshold
 
     def _empty_result(self) -> BacktestResult:
         return BacktestResult(
@@ -188,6 +219,11 @@ class Backtester:
         test_keys = _date_keys_in_range(self.sport, self.start, self.end)
         if not test_keys:
             return self._empty_result()
+
+        try:
+            fallback_date = datetime.date.fromisoformat(self.start)
+        except ValueError:
+            fallback_date = datetime.date.today()
 
         game_log: list[GameResult] = []
 
@@ -204,7 +240,27 @@ class Backtester:
             frames = [store.load(self.sport, k) for k in train_keys]
             frames = [f for f in frames if f is not None]
 
-            engine = PickEngine(self.sport, model_type=self.model_type)
+            # Derive the season this test_key falls into so season-aware
+            # models (logreg_v2) can load the leak-free per-season meta-gate
+            # trained without seeing this season's data.
+            season_year = _season_year_for_key(self.sport, key, fallback_date)
+
+            cfg = config.SPORTS[self.sport]
+            if cfg['date_type'] == 'date':
+                try:
+                    current_date = datetime.date.fromisoformat(key)
+                except ValueError:
+                    current_date = fallback_date
+            else:
+                current_date = fallback_date
+
+            engine = PickEngine(
+                self.sport,
+                model_type=self.model_type,
+                meta_threshold=self.meta_threshold,
+                season_year=season_year,
+                current_date=current_date,
+            )
             if frames:
                 historical = pd.concat(frames, ignore_index=True)
                 engine.train(historical)
@@ -238,6 +294,9 @@ class Backtester:
                     ev=pick_obj.ev,
                     away_lines=pick_obj.away_lines,
                     home_lines=pick_obj.home_lines,
+                    confidence=pick_obj.confidence,
+                    home_prob=pick_obj.home_prob,
+                    predicted_units=pick_obj.predicted_units,
                 ))
 
         total_games = len(game_log)

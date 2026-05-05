@@ -51,13 +51,13 @@ export type Status = 'loading' | 'ready' | 'error'
  * server-side `rolling_backtest_cache` table which is refreshed daily by the
  * prefetch thread. The first hit on a fresh DB triggers a synchronous compute.
  */
-export function usePerformance(days = 30) {
+export function usePerformance(days = 30, model = 'logreg_v2') {
   const fetcher = useCallback(
-    () => jsonFetch<RollingResponse>(`/api/history/rolling?days=${days}`),
-    [days],
+    () => jsonFetch<RollingResponse>(`/api/history/rolling?days=${days}&model=${model}`),
+    [days, model],
   )
   const { status, data, error } = useCachedFetch<RollingResponse>(
-    `rolling:${days}`,
+    `rolling:${days}:${model}`,
     fetcher,
   )
   const narrowed: Status = status === 'empty' ? 'ready' : status

@@ -42,7 +42,7 @@ export interface HistoryResponse {
 
 export type Status = 'loading' | 'ready' | 'error' | 'empty'
 
-export function useHistory(model = 'logreg') {
+export function useHistory(model = 'logreg_v2') {
   const fetcher = useCallback(
     () => jsonFetch<HistoryResponse>(`/api/history?model=${model}`, { acceptStatus404: true }),
     [model],

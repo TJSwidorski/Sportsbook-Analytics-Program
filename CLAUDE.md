@@ -73,6 +73,24 @@ python rolling_backtest.py --sport nba,nhl     # subset
 The Flask prefetch thread runs this automatically at startup; the CLI is for
 manual refreshes.
 
+**Train the `logreg_v2` meta-gate (offline; pickled to `data/meta_models/`):**
+```bash
+python train_meta_model.py --walk-forward --force         # RECOMMENDED: one gate per holdout season + a live gate
+python train_meta_model.py                                # single gate, holdout = most recent completed season
+python train_meta_model.py --holdout-season 2024 --force  # single gate, fixed holdout for every sport
+python train_meta_model.py --no-holdout --force           # diagnostics only — every season in training
+```
+Use `--walk-forward` when you intend to evaluate via `backtest_history.py` or
+`rolling_backtest.py`. It builds the corpus once, then fits one gate per
+holdout season Y (saved as `logreg_v2.<Y>.pkl`, each excluding Y from
+training) plus a "live" gate trained on every completed season (saved as
+`logreg_v2.pkl`). The Backtester loads the right per-season gate
+automatically: completed seasons evaluate against their leak-free
+season-keyed gate; the current/in-progress season falls back to the live
+gate (also leak-free, since the trainer never includes incomplete seasons).
+Re-run at the end of each sport's season; the Flask API picks new pickles
+up on the next process restart.
+
 ## Architecture
 
 Sports betting analytics pipeline: scrape odds → cache → transform → Naive Bayes picks → REST API → Next.js website.
@@ -119,11 +137,21 @@ SportsBookReview.com
 
 - **`bayes.py`** — `NaiveBayes(side, df)` where `side` is `'Home'` or `'Away'`. `probability(lines)` returns P(Win | lines) or None if no history. Prior is applied once (not per feature).
 
-- **`picks.py`** — `PickEngine(sport).train(historical_df)` fits home + away models. `predict_all(games_df)` returns `list[Pick]`. `Pick` has `game_index, pick, confidence, away_prob, home_prob, away_lines, home_lines`.
+- **`picks.py`** — `PickEngine(sport, model_type='logreg', meta_threshold=0.0, season_year=None).train(historical_df)` fits home + away models. `predict_all(games_df)` returns `list[Pick]`. After selecting the higher-EV side, the engine consults `model.predict_pick_value(candidate)`: if the model returns a float (e.g. `logreg_v2`), the bet fires iff `predicted_units > meta_threshold` (REPLACES the legacy `EV >= 0` rule); if it returns `None`, the legacy rule applies. Every `Pick` carries `predicted_units` (None when no gate ran), `ev`, `bet_line`, and `unit_size` so callers see what the gate decided regardless of pass/fail. `season_year` is forwarded to `model.set_evaluation_context(...)` so `LogregV2Model` loads the leak-free per-season meta-gate when one exists.
 
-- **`runner.py`** — `get_daily_picks(sport, date_or_week, training_window_days=60, force_refresh=False)` → `list[Pick]`. `run_all_sports(date)` iterates `config.SPORTS`, skips out-of-season, returns `{sport: [Pick, ...]}`.
+- **`models.py`** — Registry of swappable win-probability models behind `build_model(name)`: `nb`, `nb_bucketed`, `logreg`, and the `logreg_v2` meta-gated composite. `_ModelBase.predict_pick_value(candidate)` defaults to `None` (legacy gate); `LogregV2Model` overrides it with a fitted `MetaGate` that predicts realized flat-units. `LogregV2Model.train()` only fits the underlying logistic regression — the meta-gate is a frozen offline-trained artifact.
 
-- **`backtest.py`** — `Backtester(sport, start, end, training_window_days=60).run()` → `BacktestResult`. Walk-forward only; raises `RuntimeError` on cache miss. Units: correct `-200` → +0.50, correct `+150` → +1.50, wrong → −1.00, No Pick/Tie → 0.00.
+- **`meta_models.py`** — Components for the `logreg_v2` meta-gate: `feature_vector(candidate)` (15-feature row: ev, confidence, line_magnitude, book_disagreement, book_count, model_market_gap, plus 9 sport one-hots), `consensus_home_prob_stats(away, home)` (single source of truth for de-vigging math, also reused by `LogisticRegressionModel`), `MetaGate` dataclass wrapping a `GradientBoostingRegressor` plus provenance metadata, and `save_meta_gate(gate, season_year=None)` / `load_meta_gate(name, season_year=None)` (lru-cached). Pickles live at `data/meta_models/<name>.pkl` (the "live" gate, used for daily picks and current-season rolling) and `data/meta_models/<name>.<Y>.pkl` (per-season gates, written by `--walk-forward`, used for honest backtesting of completed season Y). `load_meta_gate(name, season_year=Y)` prefers the season-keyed pickle and silently falls back to the live pickle when no season-specific file exists (the documented behavior for the in-progress season). Missing pickles raise a clear "run train_meta_model.py" error only on first `predict_pick_value` call (registry instantiation never loads the pickle).
+
+- **`train_meta_model.py`** — One-shot CLI offline trainer for the meta-gate. Walk-forward backtests the chosen base model (default: `logreg`) over every completed cached season per sport and builds `(features, realized-units)` rows from `BacktestResult.game_log`. Two modes:
+    - **Single-gate** (default, or `--holdout-season YYYY` / `--no-holdout`) — fits one gate and saves to `<name>.pkl`. Honest only on the held-out season.
+    - **Walk-forward** (`--walk-forward`, recommended) — builds the corpus once, then fits one gate per holdout season Y excluding Y from training (saved as `<name>.<Y>.pkl`), plus a "live" gate on every completed season (saved as `<name>.pkl`). The Backtester loads the leak-free per-season gate automatically when evaluating any completed season, so `backtest_history.py` and `rolling_backtest.py` are out-of-sample everywhere.
+  
+  Both modes rebalance per-sport sample weights by default, print feature importances, and refuse to overwrite existing pickles without `--force`. Single-gate mode prints grouped 5-fold CV residuals; walk-forward mode prints per-holdout residuals (each season scored against the gate that didn't see it).
+
+- **`runner.py`** — `get_daily_picks(sport, date_or_week, training_window_days=60, force_refresh=False, model_type='logreg', meta_threshold=0.0)` → `list[Pick]`. `run_all_sports(date)` iterates `config.SPORTS`, skips out-of-season, returns `{sport: [Pick, ...]}`. `model_type` and `meta_threshold` are plumbed through `get_upcoming_picks` / `run_all_sports_upcoming` as well.
+
+- **`backtest.py`** — `Backtester(sport, start, end, model_type='logreg', meta_threshold=0.0).run()` → `BacktestResult`. Walk-forward only; raises `RuntimeError` on cache miss. For each test_key the Backtester derives the season the key falls into (via `_season_year_for_key`) and threads it through `PickEngine` so season-aware models load the leak-free per-season meta-gate. Units: correct `-200` → +0.50, correct `+150` → +1.50, wrong → −1.00, No Pick/Tie → 0.00. Each `GameResult` row carries `confidence`, `home_prob`, and `predicted_units` so `train_meta_model.py` can rebuild the meta-gate's feature vectors directly from a backtest's `game_log`.
 
 - **`prefetch.py`** — `start_background_prefetch(fallback_days_back=60)` launches a daemon thread that gap-fills the cache from `store.max_cached_date(sport)` → today per sport (or the fallback window when the cache is empty), calling `runner._fetch_live` for missing entries. After each fetch it calls `store.log_picks(...)` for fresh picks and runs `settle_completed_picks()` to fill in `picks_log` results from completed games. Invoked from `api.py` at startup. Exposes `iter_cache_keys(sport, start, end)` which `seed_db.py` reuses.
 
@@ -133,12 +161,12 @@ SportsBookReview.com
 
 - **`rolling_backtest.py`** — Rolling N-day Backtester driver. `compute_rolling(sport, end_date, window_days)` runs `Backtester` over the last `window_days` for any in-season sport and upserts the result into `store.rolling_backtest_cache` keyed by `(sport, end_date, window_days, model)`. `compute_all_rolling()` iterates all sports and skips rows already computed today (use `--force` to recompute). Wired into `prefetch.start_background_prefetch()` so the cache is refreshed daily for 7/30/90-day windows. The Flask `/api/history/rolling` endpoint reads this cache; first-time hits compute synchronously.
 
-- **`api.py`** — Flask server on port 5000 (waitress). Rewrites proxied from Next.js at `/api/*`. Endpoints:
+- **`api.py`** — Flask server on port 5000 (waitress). Rewrites proxied from Next.js at `/api/*`. The picks endpoints accept `model=logreg_v2` and `meta_threshold=<float>` (default 0.0); `_pick_to_dict` emits `predicted_units` on every Pick. Endpoints:
     - `GET /api/sports`
-    - `GET /api/picks?sport=&date=`
-    - `GET /api/picks/all?date=`
-    - `GET /api/picks/upcoming?date=` (today + tomorrow per sport)
-    - `POST /api/backtest` `{ sport, start, end, model? }` (returns `max_drawdown` alongside units/accuracy)
+    - `GET /api/picks?sport=&date=&model=&meta_threshold=`
+    - `GET /api/picks/all?date=&model=&meta_threshold=`
+    - `GET /api/picks/upcoming?date=&model=&meta_threshold=` (today + tomorrow per sport)
+    - `POST /api/backtest` `{ sport, start, end, model?, meta_threshold? }` (returns `max_drawdown` and per-game `predicted_units` alongside units/accuracy)
     - `GET /api/history?model=` — read-only aggregate from `backtest_history` (includes `max_drawdown`)
     - `GET /api/history/recent-picks?limit=` — settled picks ledger
     - `GET /api/history/performance?days=` — daily/cumulative units from `picks_log` (legacy)
@@ -193,6 +221,8 @@ tests/
   test_betmath.py           — settle_pick math (correct/wrong/push/no-pick × kelly variants)
   test_store.py             — backtest_history upsert, picks_log insert/settle/query
   test_backtest_history.py  — CLI smoke test with mocked Backtester
+  test_meta_models.py       — consensus_home_prob_stats, feature_vector, MetaGate
+                              pickle roundtrip, LogregV2Model + PickEngine gate behavior
 ```
 
 200+ tests total. All network calls are mocked with `unittest.mock.patch`. On Windows the `python` shim may be absent — use `py -m pytest tests/` if so.

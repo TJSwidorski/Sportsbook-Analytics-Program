@@ -78,6 +78,7 @@ def get_daily_picks(
     training_window_days: int = 60,
     force_refresh: bool = False,
     model_type: str = 'logreg',
+    meta_threshold: float = 0.0,
 ) -> list[Pick]:
     """
     Return picks for one sport on one date/week.
@@ -109,7 +110,7 @@ def get_daily_picks(
         if df is not None:
             training_frames.append(df)
 
-    engine = PickEngine(sport, model_type=model_type)
+    engine = PickEngine(sport, model_type=model_type, meta_threshold=meta_threshold)
     if training_frames:
         historical = pd.concat(training_frames, ignore_index=True)
         engine.train(historical)
@@ -117,7 +118,11 @@ def get_daily_picks(
     return engine.predict_all(df_today)
 
 
-def run_all_sports(date: str, model_type: str = 'logreg') -> dict[str, list[Pick]]:
+def run_all_sports(
+    date: str,
+    model_type: str = 'logreg',
+    meta_threshold: float = 0.0,
+) -> dict[str, list[Pick]]:
     """
     Return picks for every in-season sport on the given calendar date string.
     Week-based sports convert the date to a week number via config.date_to_week().
@@ -140,7 +145,10 @@ def run_all_sports(date: str, model_type: str = 'logreg') -> dict[str, list[Pick
             date_or_week = date
 
         try:
-            results[sport] = get_daily_picks(sport, date_or_week, model_type=model_type)
+            results[sport] = get_daily_picks(
+                sport, date_or_week,
+                model_type=model_type, meta_threshold=meta_threshold,
+            )
         except Exception as exc:
             print(f'[runner] {sport} failed: {exc}')
             results[sport] = []
@@ -184,6 +192,7 @@ def _picks_for_date(
     d: datetime.date,
     filter_completed: bool,
     model_type: str = 'logreg',
+    meta_threshold: float = 0.0,
 ) -> list[Pick]:
     """
     Return picks for one sport on one calendar date.
@@ -201,7 +210,10 @@ def _picks_for_date(
         date_or_week = d.isoformat()
 
     try:
-        picks = get_daily_picks(sport, date_or_week, model_type=model_type)
+        picks = get_daily_picks(
+            sport, date_or_week,
+            model_type=model_type, meta_threshold=meta_threshold,
+        )
     except Exception as exc:
         print(f'[runner] {sport} {d} failed: {exc}')
         return []
@@ -221,6 +233,7 @@ def get_upcoming_picks(
     sport: str,
     today_iso: str,
     model_type: str = 'logreg',
+    meta_threshold: float = 0.0,
 ) -> dict[str, list[Pick]]:
     """
     Return {'today': [...], 'tomorrow': [...]} for one sport.
@@ -234,17 +247,27 @@ def get_upcoming_picks(
     today_d = datetime.date.fromisoformat(today_iso)
     tomorrow_d = today_d + datetime.timedelta(days=1)
     return {
-        'today': _picks_for_date(sport, today_d, filter_completed=True, model_type=model_type),
-        'tomorrow': _picks_for_date(sport, tomorrow_d, filter_completed=False, model_type=model_type),
+        'today': _picks_for_date(
+            sport, today_d, filter_completed=True,
+            model_type=model_type, meta_threshold=meta_threshold,
+        ),
+        'tomorrow': _picks_for_date(
+            sport, tomorrow_d, filter_completed=False,
+            model_type=model_type, meta_threshold=meta_threshold,
+        ),
     }
 
 
 def run_all_sports_upcoming(
     today_iso: str,
     model_type: str = 'logreg',
+    meta_threshold: float = 0.0,
 ) -> dict[str, dict[str, list[Pick]]]:
     """Return {sport: {'today': [...], 'tomorrow': [...]}} for every sport in SPORTS."""
     return {
-        sport: get_upcoming_picks(sport, today_iso, model_type=model_type)
+        sport: get_upcoming_picks(
+            sport, today_iso,
+            model_type=model_type, meta_threshold=meta_threshold,
+        )
         for sport in config.SPORTS
     }

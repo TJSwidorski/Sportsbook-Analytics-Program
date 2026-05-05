@@ -56,8 +56,20 @@ def _pick_to_dict(p):
         'ev': _safe_num(getattr(p, 'ev', None)),
         'unit_size': _safe_num(getattr(p, 'unit_size', 0.0)) or 0.0,
         'bet_line': getattr(p, 'bet_line', None),
-        'model': getattr(p, 'model', 'logreg'),
+        'model': getattr(p, 'model', 'logreg_v2'),
+        'predicted_units': _safe_num(getattr(p, 'predicted_units', None)),
     }
+
+
+def _meta_threshold_arg(default: float = 0.0) -> float:
+    """Read `meta_threshold` from a query string, returning `default` on error."""
+    raw = request.args.get('meta_threshold')
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 @app.route('/api/sports')
@@ -80,7 +92,8 @@ def sports_list():
 def picks():
     sport = request.args.get('sport', 'nba')
     date_str = request.args.get('date', datetime.date.today().isoformat())
-    model_type = request.args.get('model', 'logreg')
+    model_type = request.args.get('model', 'logreg_v2')
+    meta_threshold = _meta_threshold_arg()
 
     try:
         import config
@@ -99,11 +112,15 @@ def picks():
         else:
             date_or_week = date_str
 
-        pick_list = get_daily_picks(sport, date_or_week, model_type=model_type)
+        pick_list = get_daily_picks(
+            sport, date_or_week,
+            model_type=model_type, meta_threshold=meta_threshold,
+        )
         return jsonify({
             'sport': sport,
             'date': date_str,
             'model': model_type,
+            'meta_threshold': meta_threshold,
             'picks': [_pick_to_dict(p) for p in pick_list],
         })
 
@@ -115,13 +132,17 @@ def picks():
 @app.route('/api/picks/all')
 def picks_all():
     date_str = request.args.get('date', datetime.date.today().isoformat())
-    model_type = request.args.get('model', 'logreg')
+    model_type = request.args.get('model', 'logreg_v2')
+    meta_threshold = _meta_threshold_arg()
     try:
         from runner import run_all_sports
-        results = run_all_sports(date_str, model_type=model_type)
+        results = run_all_sports(
+            date_str, model_type=model_type, meta_threshold=meta_threshold,
+        )
         return jsonify({
             'date': date_str,
             'model': model_type,
+            'meta_threshold': meta_threshold,
             'sports': {
                 sport: [_pick_to_dict(p) for p in pick_list]
                 for sport, pick_list in results.items()
@@ -147,10 +168,13 @@ def picks_upcoming():
       }
     """
     date_str = request.args.get('date', datetime.date.today().isoformat())
-    model_type = request.args.get('model', 'logreg')
+    model_type = request.args.get('model', 'logreg_v2')
+    meta_threshold = _meta_threshold_arg()
     try:
         from runner import run_all_sports_upcoming
-        results = run_all_sports_upcoming(date_str, model_type=model_type)
+        results = run_all_sports_upcoming(
+            date_str, model_type=model_type, meta_threshold=meta_threshold,
+        )
         tomorrow_str = (
             datetime.date.fromisoformat(date_str) + datetime.timedelta(days=1)
         ).isoformat()
@@ -158,6 +182,7 @@ def picks_upcoming():
             'date': date_str,
             'tomorrow_date': tomorrow_str,
             'model': model_type,
+            'meta_threshold': meta_threshold,
             'sports': {
                 sport: {
                     'today': [_pick_to_dict(p) for p in buckets['today']],
@@ -181,13 +206,21 @@ def run_backtest():
         sport = body.get('sport', 'nba')
         start = body.get('start', '2024-01-01')
         end = body.get('end', '2024-12-31')
-        model_type = body.get('model', 'logreg')
+        model_type = body.get('model', 'logreg_v2')
+        try:
+            meta_threshold = float(body.get('meta_threshold', 0.0))
+        except (TypeError, ValueError):
+            meta_threshold = 0.0
 
         from backtest import Backtester
-        result = Backtester(sport, start, end, model_type=model_type).run()
+        result = Backtester(
+            sport, start, end,
+            model_type=model_type, meta_threshold=meta_threshold,
+        ).run()
         return jsonify({
             'sport': result.sport,
             'model': result.model,
+            'meta_threshold': meta_threshold,
             'start': result.start,
             'end': result.end,
             'total_games': result.total_games,
@@ -210,6 +243,9 @@ def run_backtest():
                     'bet_line': g.bet_line,
                     'unit_size': g.unit_size,
                     'ev': _safe_num(g.ev),
+                    'confidence': _safe_num(g.confidence),
+                    'home_prob': _safe_num(g.home_prob),
+                    'predicted_units': _safe_num(g.predicted_units),
                     'away_lines': g.away_lines,
                     'home_lines': g.home_lines,
                 }
@@ -237,7 +273,7 @@ def history_summary():
     `max_drawdown` is the true all-time floor (not the max of per-season
     floors), and `earliest_year` is sourced from the actual game logs.
     """
-    model_type = request.args.get('model', 'logreg')
+    model_type = request.args.get('model', 'logreg_v2')
     import store
     rows = store.load_backtest_history(model=model_type, include_game_log=True)
     if not rows:
@@ -375,7 +411,7 @@ def history_rolling():
         days = max(1, min(int(request.args.get('days', 30)), 180))
     except (TypeError, ValueError):
         days = 30
-    model_type = request.args.get('model', 'logreg')
+    model_type = request.args.get('model', 'logreg_v2')
 
     import store
     rows = store.load_rolling_backtest(window_days=days, model=model_type)

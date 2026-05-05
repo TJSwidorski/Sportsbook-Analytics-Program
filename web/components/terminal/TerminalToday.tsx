@@ -1,0 +1,209 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import type { Palette } from '@/lib/palette'
+import { FONT_MONO } from '@/lib/palette'
+import { useUpcomingPicks, type RawPick } from '@/lib/use-upcoming-picks'
+import { GameCard } from './GameCard'
+import { DetailPanel } from './DetailPanel'
+import { SportFilter } from './SportFilter'
+import { SortFilter, americanToDecimal, type SortMode } from './SortFilter'
+import { rawPickToGameCard, flattenUpcoming } from '@/lib/pick-adapter'
+
+interface Props {
+  palette: Palette
+}
+
+interface SelectedPick {
+  raw: RawPick
+  sport: string
+}
+
+interface FlatItem {
+  sport: string
+  raw: RawPick
+  bucket: 'today' | 'tomorrow'
+}
+
+function sortItems(items: FlatItem[], mode: SortMode): FlatItem[] {
+  const scored = items.map((item) => {
+    const ev = item.raw.ev
+    const conf = item.raw.confidence
+    const dec = americanToDecimal(item.raw.bet_line)
+    let primary: number
+    let hasValue = true
+    switch (mode) {
+      case 'EDGE':
+        primary = ev != null && Number.isFinite(ev) ? -ev : Infinity
+        hasValue = ev != null && Number.isFinite(ev)
+        break
+      case 'CONFIDENCE':
+        primary = conf != null && Number.isFinite(conf) ? -conf : Infinity
+        hasValue = conf != null && Number.isFinite(conf)
+        break
+      case 'LONGSHOT':
+        primary = dec != null ? -dec : Infinity
+        hasValue = dec != null
+        break
+      case 'FAVORITE':
+        primary = dec != null ? dec : Infinity
+        hasValue = dec != null
+        break
+    }
+    return { item, primary, hasValue }
+  })
+  scored.sort((a, b) => {
+    if (a.hasValue !== b.hasValue) return a.hasValue ? -1 : 1
+    return a.primary - b.primary
+  })
+  return scored.map((s) => s.item)
+}
+
+export function TerminalToday({ palette }: Props) {
+  const today = new Date().toISOString().slice(0, 10)
+  const { status, data, error } = useUpcomingPicks(today)
+  const [selected, setSelected] = useState<SelectedPick | null>(null)
+  const [filter, setFilter] = useState<string>('ALL')
+  const [sort, setSort] = useState<SortMode>('EDGE')
+
+  const all = useMemo(() => (data ? flattenUpcoming(data.sports) : []), [data])
+  const sportsAvail = useMemo(() => {
+    const set = new Set<string>()
+    for (const item of all) set.add(item.sport.toUpperCase())
+    return Array.from(set).sort()
+  }, [all])
+  const filtered = useMemo(() => {
+    const base = filter === 'ALL' ? all : all.filter((x) => x.sport.toUpperCase() === filter)
+    return sortItems(base, sort)
+  }, [all, filter, sort])
+
+  const dateLabel = new Date().toLocaleDateString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    weekday: 'long',
+  })
+
+  return (
+    <div
+      style={{
+        padding: '32px',
+        display: 'grid',
+        gridTemplateColumns: selected ? '1fr 420px' : '1fr',
+        gap: 24,
+        maxWidth: 1376,
+        margin: '0 auto',
+      }}
+    >
+      <div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            marginBottom: 24,
+            gap: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 11,
+                color: palette.muted,
+                letterSpacing: 1.5,
+                marginBottom: 6,
+              }}
+            >
+              {dateLabel.toUpperCase()}
+            </div>
+            <h2 style={{ fontSize: 36, fontWeight: 500, margin: 0, letterSpacing: -1 }}>
+              Today&apos;s Board
+            </h2>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <SortFilter palette={palette} value={sort} onChange={setSort} />
+            <SportFilter
+              palette={palette}
+              options={['ALL', ...sportsAvail]}
+              value={filter}
+              onChange={setFilter}
+            />
+          </div>
+        </div>
+
+        {status === 'loading' && (
+          <div
+            style={{
+              padding: 48,
+              textAlign: 'center',
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.muted,
+              letterSpacing: 1,
+            }}
+          >
+            FETCHING PICKS…
+          </div>
+        )}
+        {status === 'error' && (
+          <div
+            style={{
+              padding: 24,
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.danger,
+              border: `1px solid ${palette.border}`,
+              background: palette.surface,
+            }}
+          >
+            ERROR: {error}
+          </div>
+        )}
+        {status === 'ready' && filtered.length === 0 && (
+          <div
+            style={{
+              padding: 48,
+              textAlign: 'center',
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.muted,
+            }}
+          >
+            NO PICKS FOR THIS FILTER.
+          </div>
+        )}
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: selected ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
+            gap: 12,
+          }}
+        >
+          {filtered.map((item, i) => {
+            const card = rawPickToGameCard(item.raw, item.sport, item.bucket === 'tomorrow' ? 'TOMORROW' : 'TODAY')
+            return (
+              <GameCard
+                key={`${item.sport}-${item.raw.game_index}-${i}`}
+                g={card}
+                palette={palette}
+                onClick={() => setSelected({ raw: item.raw, sport: item.sport })}
+              />
+            )
+          })}
+        </div>
+      </div>
+
+      {selected && (
+        <DetailPanel
+          palette={palette}
+          pick={selected.raw}
+          sport={selected.sport}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </div>
+  )
+}

@@ -158,19 +158,20 @@ def _refresh_rolling_backtests() -> None:
         return
 
     for window in (7, 30, 90):
-        started = time.time()
-        try:
-            statuses = compute_all_rolling(window_days=window)
-        except Exception as exc:  # pragma: no cover — defensive
-            print(f'[prefetch] rolling-{window}d FAILED — {type(exc).__name__}: {exc}')
-            continue
-        computed = sum(1 for v in statuses.values() if v == 'computed')
-        cached = sum(1 for v in statuses.values() if v == 'cached')
-        skipped = len(statuses) - computed - cached
-        print(
-            f'[prefetch] rolling-{window}d: computed={computed} cached={cached} '
-            f'skipped={skipped} in {time.time() - started:.1f}s'
-        )
+        for model in ('logreg', 'logreg_v2'):
+            started = time.time()
+            try:
+                statuses = compute_all_rolling(window_days=window, model=model)
+            except Exception as exc:  # pragma: no cover — defensive
+                print(f'[prefetch] rolling-{window}d/{model} FAILED — {type(exc).__name__}: {exc}')
+                continue
+            computed = sum(1 for v in statuses.values() if v == 'computed')
+            cached = sum(1 for v in statuses.values() if v == 'cached')
+            skipped = len(statuses) - computed - cached
+            print(
+                f'[prefetch] rolling-{window}d/{model}: computed={computed} cached={cached} '
+                f'skipped={skipped} in {time.time() - started:.1f}s'
+            )
 
 
 def start_background_prefetch(fallback_days_back: int = 60) -> threading.Thread:

@@ -10,6 +10,8 @@ sports. _WEEK1_STARTS must be updated each season with the actual first-game
 date of Week 1.
 """
 
+import json as _json
+import os as _os
 from datetime import date
 
 SPORTS: dict[str, dict] = {
@@ -129,3 +131,19 @@ def date_to_week(sport: str, d: date) -> int | None:
         return None
 
     return delta // 7 + 1
+
+
+def _load_per_sport_thresholds() -> dict[str, float]:
+    """Load per-sport meta-gate thresholds from thresholds.json if it exists."""
+    path = _os.path.join(_os.path.dirname(__file__), 'data', 'meta_models', 'thresholds.json')
+    if not _os.path.exists(path):
+        return {}
+    with open(path) as f:
+        raw = _json.load(f)
+    return {k: float(v) for k, v in raw.items() if not k.startswith('_')}
+
+
+# Per-sport meta-gate thresholds for logreg_v2, loaded from
+# data/meta_models/thresholds.json (written by optimize_threshold.py --save).
+# Falls back to {} (no per-sport override) when the file doesn't exist yet.
+PER_SPORT_THRESHOLDS: dict[str, float] = _load_per_sport_thresholds()

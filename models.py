@@ -14,16 +14,24 @@ Available keys via `build_model(name)`:
   'nb'           — Naive Bayes on raw moneyline tokens (legacy behavior)
   'nb_bucketed'  — Naive Bayes on implied-probability buckets (smoothed)
   'logreg'       — Logistic regression on de-vigged consensus probability
+  'logreg_v2'    — Logreg + offline-trained gradient-boosted-tree meta-gate
+                   that predicts realized flat-units. Only places bets when
+                   the predicted units exceed the engine's meta_threshold,
+                   replacing the legacy `EV >= 0` gate. Requires a fitted
+                   pickle at `data/meta_models/logreg_v2.pkl` (run
+                   `python train_meta_model.py` to create it).
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 
+import meta_models
 from bayes import NaiveBayes
 from betmath import is_valid_line
 from package import Package
@@ -85,6 +93,29 @@ class _ModelBase:
         home_lines: list[str],
     ) -> float | None:
         raise NotImplementedError
+
+    def predict_pick_value(self, candidate: dict[str, Any]) -> float | None:
+        """
+        Predicted flat-units-per-bet for a candidate Pick. Default: `None`,
+        meaning the model has no opinion and the legacy `EV >= 0` gate
+        applies. Models that override this (e.g. `LogregV2Model`) replace
+        the EV gate with `predicted_units > engine.meta_threshold`.
+
+        `candidate` carries the fields needed to build a feature row — see
+        `meta_models.feature_vector` for the contract.
+        """
+        return None
+
+    def set_evaluation_context(self, season_year: int | None = None) -> None:
+        """
+        Optional hook so season-aware models (e.g. `LogregV2Model`) can swap
+        in a leak-free per-season meta-gate before predictions are issued.
+
+        Default: no-op. Backtester calls this once per test_key with the
+        season the key falls into; live runners pass `None` to use the gate
+        trained on every completed season.
+        """
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -179,23 +210,15 @@ class LogisticRegressionModel(_ModelBase):
         away_lines: list[str],
         home_lines: list[str],
     ) -> float | None:
-        """Median de-vigged P(home wins) across valid book pairs (skips Open)."""
-        # Skip the leading 'Open' column when present (matches betmath convention).
-        a_books = away_lines[1:] if len(away_lines) > 1 else away_lines
-        h_books = home_lines[1:] if len(home_lines) > 1 else home_lines
-        probs: list[float] = []
-        for a, h in zip(a_books, h_books):
-            if not (is_valid_line(a) and is_valid_line(h)):
-                continue
-            ap = _implied_prob(a)
-            hp = _implied_prob(h)
-            if ap is None or hp is None:
-                continue
-            vig = ap + hp - 1.0
-            probs.append(hp - 0.5 * vig)
-        if not probs:
-            return None
-        return float(np.median(probs))
+        """Median de-vigged P(home wins) across valid book pairs (skips Open).
+
+        Thin wrapper around `meta_models.consensus_home_prob_stats` so the
+        de-vigging math has a single source of truth shared with the
+        meta-gate's `book_disagreement` and `model_market_gap` features.
+        """
+        return meta_models.consensus_home_prob_stats(
+            list(away_lines), list(home_lines),
+        )['median']
 
     def train(self, packaged_df: pd.DataFrame) -> None:
         X: list[list[float]] = []
@@ -221,8 +244,19 @@ class LogisticRegressionModel(_ModelBase):
             self._clf = None
             return
 
-        clf = LogisticRegression()
-        clf.fit(np.array(X), np.array(y))
+        X_arr = np.array(X)
+        y_arr = np.array(y)
+        base_clf = LogisticRegression()
+        # Platt scaling (sigmoid) calibrates raw logistic probabilities to
+        # match observed win frequencies. Requires ≥ 5 samples per class for
+        # 5-fold CV; fall back to uncalibrated when the training window is small
+        # (common during the first few weeks of a season).
+        n_minority = int(min(y_arr.sum(), len(y_arr) - y_arr.sum()))
+        if n_minority >= 5:
+            clf = CalibratedClassifierCV(base_clf, cv=min(5, n_minority), method='sigmoid')
+        else:
+            clf = base_clf
+        clf.fit(X_arr, y_arr)
         self._clf = clf
 
     def predict_home_prob(
@@ -240,6 +274,67 @@ class LogisticRegressionModel(_ModelBase):
 
 
 # ---------------------------------------------------------------------------
+# Logreg + meta-gate composite (`logreg_v2`)
+# ---------------------------------------------------------------------------
+
+class LogregV2Model(_ModelBase):
+    """
+    Composite model: a `LogisticRegressionModel` for P(home wins) plus a
+    pickled `meta_models.MetaGate` that predicts realized flat-units from
+    a candidate Pick's features. The `PickEngine` consults
+    `predict_pick_value` AFTER selecting the higher-EV side and uses its
+    output (instead of the legacy `EV >= 0` check) to decide whether to
+    actually place the bet.
+
+    `train()` only fits the base logistic regression — the meta-gate is a
+    frozen offline-trained artifact, loaded lazily on first prediction so
+    a missing pickle does NOT break `available_models()` or registry
+    instantiation.
+    """
+
+    name = 'logreg_v2'
+
+    def __init__(self, gate_name: str = 'logreg_v2'):
+        self._base = LogisticRegressionModel()
+        self._gate_name = gate_name
+        self._gate: meta_models.MetaGate | None = None
+        self._season_year: int | None = None
+
+    def train(self, packaged_df: pd.DataFrame) -> None:
+        self._base.train(packaged_df)
+
+    def predict_home_prob(
+        self,
+        away_lines: list[str],
+        home_lines: list[str],
+    ) -> float | None:
+        return self._base.predict_home_prob(away_lines, home_lines)
+
+    def set_evaluation_context(self, season_year: int | None = None) -> None:
+        """
+        Bind the season being evaluated. Backtester calls this once per
+        test_key so the model can load the leak-free per-season gate
+        (`logreg_v2.<season>.pkl`). Resets the cached gate only when the
+        season actually changes, so tests can inject `_gate` directly and
+        reuse it across calls with the same context.
+        """
+        if season_year != self._season_year:
+            self._gate = None
+        self._season_year = season_year
+
+    def _ensure_gate(self) -> meta_models.MetaGate:
+        if self._gate is None:
+            self._gate = meta_models.load_meta_gate(
+                self._gate_name, season_year=self._season_year,
+            )
+        return self._gate
+
+    def predict_pick_value(self, candidate: dict[str, Any]) -> float | None:
+        gate = self._ensure_gate()
+        return gate.predict(meta_models.feature_vector(candidate))
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -247,6 +342,7 @@ _MODEL_REGISTRY: dict[str, Callable[[], _ModelBase]] = {
     'nb':           lambda: NaiveBayesModel(bucketed=False),
     'nb_bucketed':  lambda: NaiveBayesModel(bucketed=True),
     'logreg':       lambda: LogisticRegressionModel(),
+    'logreg_v2':    lambda: LogregV2Model(),
 }
 
 
