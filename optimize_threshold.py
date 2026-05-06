@@ -476,6 +476,15 @@ def run(
     # Use train_data for all selection logic
     data = train_data
 
+    if not walk_forward:
+        print(
+            '\n[optimize] WARNING: --walk-forward not enabled. '
+            'The threshold is being selected by evaluating candidates on the same corpus '
+            'that will be used for backtesting — this is in-sample optimization bias. '
+            'Use --walk-forward for bias-free (out-of-sample) threshold selection.',
+            flush=True,
+        )
+
     # --- Pre-compute best thresholds for table markers ---
     best_t_upc, best_t_sharpe, best_t_units = _compute_best_thresholds(
         data, _THRESHOLDS, min_picks=100, min_picks_per_season=min_picks_per_season,
@@ -660,12 +669,14 @@ def run(
             'train_rows': len(train_data),
             'test_rows': len(test_data),
         }
-        os.makedirs(os.path.dirname(_THRESHOLDS_JSON_PATH), exist_ok=True)
-        with open(_THRESHOLDS_JSON_PATH, 'w') as f:
+        import config as _config
+        save_path = _config._thresholds_path(args.name)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, 'w') as f:
             json.dump(payload, f, indent=2)
-        print(f'\n[optimize] Thresholds saved to {_THRESHOLDS_JSON_PATH}')
+        print(f'\n[optimize] Thresholds saved to {save_path}')
         print('[optimize] Restart the Flask API to pick up the new thresholds.')
-        print('[optimize] Verify with: py -c "import config; print(config.PER_SPORT_THRESHOLDS)"')
+        print(f'[optimize] Verify with: py -c "import config; print(config.load_gate_thresholds({args.name!r}))"')
 
 
 def main(argv: list[str] | None = None) -> int:

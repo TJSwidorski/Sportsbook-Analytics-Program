@@ -312,6 +312,15 @@ def load_meta_gate(
         season_path = _pickle_path(name, season_year=season_year, base_dir=base_dir)
         if os.path.exists(season_path):
             return _load_bundle(season_path)
+        # Season-specific gate missing — live gate is a fallback but it was trained on
+        # ALL completed seasons, so predictions for season_year are IN-SAMPLE.
+        print(
+            f'[meta_models] WARNING: no per-season gate found for {name!r} season {season_year}. '
+            f'Falling back to live gate, which was trained on ALL completed seasons '
+            f'(IN-SAMPLE for season {season_year}). '
+            f'Run `python train_meta_model.py --walk-forward` to create leak-free per-season gates.',
+            flush=True,
+        )
     base_path = _pickle_path(name, season_year=None, base_dir=base_dir)
     if not os.path.exists(base_path):
         raise FileNotFoundError(

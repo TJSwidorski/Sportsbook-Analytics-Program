@@ -225,6 +225,26 @@ export function TerminalShell() {
           {tab === 'about' && <TerminalAbout palette={palette} />}
         </div>
       </div>
+
+      <footer
+        style={{
+          borderTop: `1px solid ${palette.border}`,
+          background: palette.surface,
+          fontFamily: FONT_MONO,
+          fontSize: 10,
+          color: palette.muted,
+          textAlign: 'center',
+          padding: '8px 16px',
+          lineHeight: 1.6,
+          position: 'relative',
+          zIndex: 5,
+        }}
+      >
+        FOR INFORMATIONAL &amp; ENTERTAINMENT PURPOSES ONLY · NOT FINANCIAL ADVICE · 21+ · GAMBLING MAY BE ILLEGAL IN YOUR JURISDICTION
+        <span style={{ marginLeft: 16, opacity: 0.6 }}>
+          PROBLEM GAMBLING HELPLINE: 1-800-GAMBLER
+        </span>
+      </footer>
     </div>
   )
 }

@@ -1,100 +1,240 @@
-# Axiom Picks
+# Axiom Sports
 
-AI-powered sports betting analytics. Scrapes daily moneyline odds from SportsBookReview, trains a Naive Bayes classifier on historical data, and serves picks + backtesting results through a Next.js web interface.
+Sports-betting analytics pipeline — scrapes odds, models win probabilities, sizes bets with fractional Kelly, and publishes daily picks through a REST API and Next.js terminal UI at axiomsports.com.
 
-## Supported Sports
+> **For informational and entertainment purposes only. Not financial advice. 21+. Gambling may be illegal in your jurisdiction. Problem Gambling Helpline: 1-800-GAMBLER.**
 
-| Sport | Schedule | Leagues |
-|-------|----------|---------|
-| NBA, NHL, MLB, MLS, NCAAB, WNBA | Date-based | Professional + College |
-| NFL, NCAAF, CFL | Week-based | Professional + College |
+---
 
-## Setup
+## Local development
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+
+### Setup
 
 ```bash
-# Python backend
+# 1. Install Python dependencies
 pip install -r requirements.txt
 
-# Next.js frontend
-cd web && npm install
+# 2. Install frontend dependencies
+cd web && npm install && cd ..
+
+# 3. Seed the SQLite cache (one-time, ~5-10 min)
+py seed_db.py
+
+# 4. Start everything (Flask API + Next.js frontend)
+cd web && npm run dev:all
 ```
 
-## Running
+Open http://localhost:3000.
 
-**Start the Flask API** (from project root):
+### Environment variables
+
+Copy the example files and edit as needed:
+
 ```bash
-python api.py
-# → http://localhost:5000
+copy .env.example .env
+copy web\.env.example web\.env.local
 ```
 
-**Start the web app** (in a second terminal):
+Flask backend (`.env`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `5000` | Listen port |
+| `ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:3001` | CORS origins |
+
+Next.js frontend (`web/.env.local`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_BASE_URL` | `http://localhost:5000` | Flask API base URL |
+
+---
+
+## Production deployment
+
+The site is two pieces:
+
+- **Frontend** — Next.js hosted on Netlify
+- **Backend** — Flask + SQLite on a VPS (DigitalOcean Droplet recommended)
+
+### Backend — DigitalOcean Droplet
+
+**1. Create a droplet**
+
+Ubuntu 24.04 LTS, Basic plan ($6/mo or higher). Add your SSH key.
+
+**2. SSH in and install Python**
+
 ```bash
-cd web && npm run dev
-# → http://localhost:3000
+ssh root@<your-droplet-ip>
+apt update && apt install -y python3 python3-pip python3-venv git nginx certbot python3-certbot-nginx
 ```
 
-**Run tests:**
+**3. Clone and install**
+
 ```bash
-python -m pytest tests/
+git clone https://github.com/<you>/Sportsbook-Analytics-Program.git /opt/axiom
+cd /opt/axiom
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
+
+**4. Seed the cache**
+
+```bash
+source venv/bin/activate
+python seed_db.py
+```
+
+**5. Create a systemd service**
+
+```bash
+cat > /etc/systemd/system/axiom.service << 'EOF'
+[Unit]
+Description=Axiom Sports Flask API
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/axiom
+EnvironmentFile=/opt/axiom/.env
+ExecStart=/opt/axiom/venv/bin/python api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable axiom
+systemctl start axiom
+```
+
+Create `/opt/axiom/.env`:
+
+```
+API_HOST=127.0.0.1
+PORT=5000
+ALLOWED_ORIGINS=https://axiomsports.com,https://www.axiomsports.com
+```
+
+**6. Point a subdomain at the droplet**
+
+In your DNS panel (e.g. Cloudflare), add an A record: `api.axiomsports.com -> <droplet-ip>`.
+
+**7. Configure nginx + SSL**
+
+```bash
+cat > /etc/nginx/sites-available/axiom << 'EOF'
+server {
+    listen 80;
+    server_name api.axiomsports.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+
+ln -s /etc/nginx/sites-available/axiom /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+certbot --nginx -d api.axiomsports.com
+```
+
+**8. Set up weekly model retraining (optional)**
+
+```bash
+crontab -e
+# Add:
+0 3 * * 0 cd /opt/axiom && source venv/bin/activate && python train_meta_model.py --walk-forward --force >> /var/log/axiom-train.log 2>&1
+```
+
+The Flask prefetch thread handles daily data updates automatically at startup -- no GitHub Actions or cron needed for real-time picks.
+
+---
+
+### Frontend — Netlify
+
+**1. Import the repo**
+
+Go to app.netlify.com -> Add new site -> Import from GitHub -> select this repo.
+
+Build settings:
+- Base directory: `web`
+- Build command: `npm run build`
+- Publish directory: `web/.next`
+
+**2. Add the environment variable**
+
+In Netlify: Site settings -> Environment variables -> Add:
+
+```
+API_BASE_URL = https://api.axiomsports.com
+```
+
+**3. Set the custom domain**
+
+Netlify: Site settings -> Domain management -> Add custom domain -> `axiomsports.com`.
+
+Add the CNAME/A records Netlify shows you in your DNS panel. Netlify provisions SSL automatically.
+
+**4. Deploy**
+
+Push to `main` -- Netlify builds and deploys automatically on every push.
+
+---
 
 ## Architecture
 
 ```
 SportsBookReview.com
-  → sports.py      URL generation per sport / date / week
-  → retrieve.py    HTML scraping → raw DataFrame
-  → package.py     Odds → probabilities, scores → Win/Loss labels
-  → bayes.py       Naive Bayes classifier
-  → picks.py       PickEngine: train + predict per game
-  → runner.py      Daily orchestrator (cache-first, then live fetch)
-  → backtest.py    Walk-forward backtester (cache-only, no data leakage)
-  → api.py         Flask REST API
-  → web/           Next.js frontend (Axiom Picks)
+  -> retrieve.py       (HTML scraper -> DataFrame)
+  -> store.py          (SQLite at data/cache.db)
+  -> package.py        (odds -> probabilities, scores -> labels)
+  -> bayes.py          (Naive Bayes classifier)
+  -> models.py         (logistic regression + logreg_v2 meta-gate)
+  -> picks.py          (PickEngine: train + predict_all)
+  -> runner.py         (daily orchestrator)
+  -> prefetch.py       (background gap-fill + result settlement)
+  -> api.py            (Flask REST API, port 5000)
+  -> web/              (Next.js 15 -- Axiom Terminal)
 ```
 
-**Key modules:**
+Nine leagues (moneyline only): NBA, NHL, MLB, MLS, WNBA, NCAAB, NFL, NCAAF, CFL.
 
-- **`config.py`** — Sport metadata, season windows, `date_to_week()` converter, `is_in_season()` guard.
-- **`store.py`** — Local parquet cache at `data/{sport}/{date_or_week}.parquet`. Avoids re-scraping.
-- **`sports.py`** — URL generation for each sport/bet type/period on SportsBookReview.
-- **`retrieve.py`** — `SportsbookReviewAPI` fetches HTML; sport-specific `MoneyLineAPI` subclasses parse odds and scores. MLB/MLS/WNBA/CFL use `_sequential_clean_scores()` to handle embedded team/pitcher names.
-- **`package.py`** — Converts American odds to true probabilities (vig removed), assigns Win/Loss labels.
-- **`bayes.py`** — `NaiveBayes`: P(Win | observed lines) via conditional probability over historical data.
-- **`picks.py`** — `PickEngine` wraps two `NaiveBayes` models (home + away). `Pick` dataclass holds result per game.
-- **`runner.py`** — `get_daily_picks()` loads from cache or fetches live. `run_all_sports()` iterates all in-season sports.
-- **`backtest.py`** — `Backtester.run()` walk-forward loop: train on [D−window, D−1], test on D. Returns `BacktestResult` with per-game units log.
+---
 
-## API Endpoints
+## Updating the model
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/sports` | All sports + in-season status |
-| `GET` | `/api/picks?sport=nba&date=YYYY-MM-DD` | Picks for one sport/date |
-| `GET` | `/api/picks/all?date=YYYY-MM-DD` | Picks for all in-season sports |
-| `POST` | `/api/backtest` | Run walk-forward backtest |
+After seeding new seasons:
 
-**Backtest request body:**
-```json
-{ "sport": "nba", "start": "2024-01-01", "end": "2024-12-31", "training_window_days": 60 }
+```bash
+# Retrain the meta-gate
+py train_meta_model.py --walk-forward --force
+
+# Reselect thresholds
+py optimize_threshold.py --walk-forward --objective sharpe --save
+
+# Refresh backtest history
+py backtest_history.py --force
+
+# Restart the service (picks up new pickles)
+systemctl restart axiom
 ```
 
-## Units Calculation
+---
 
-Backtesting uses moneyline odds-adjusted units:
+## Legal
 
-| Outcome | Units |
-|---------|-------|
-| Correct pick on −200 line | +0.50 |
-| Correct pick on +150 line | +1.50 |
-| Wrong pick | −1.00 |
-| No Pick or Tie | 0.00 |
-
-## Web App
-
-The frontend (`web/`) is a Next.js 15 app with:
-
-- **`/`** — Today's picks by sport. Sport tabs → swipeable game pick cards (MorphingCardStack) with confidence bars and odds lines. Three.js animated particle wave background.
-- **`/backtest`** — Backtest terminal. Configure sport/dates/window → stats dashboard with cumulative units chart and scrollable game log.
-
-**Frontend stack:** Next.js 15, Tailwind CSS 3, TypeScript, Framer Motion, Three.js.
+For informational and entertainment purposes only. Nothing on this site constitutes financial, investment, or sports-betting advice. Past performance does not guarantee future results. Must be 21+ and comply with local gambling laws. If you or someone you know has a gambling problem, call 1-800-GAMBLER (1-800-426-2537) or visit ncpgambling.org.

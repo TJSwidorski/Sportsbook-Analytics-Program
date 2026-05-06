@@ -101,6 +101,52 @@ only corpus rows from seasons strictly before Y. Saves a nested JSON to
 `data/meta_models/thresholds.json`; `config.py` and `PickEngine` resolve the per-season
 threshold automatically during backtests and the live threshold for daily picks.
 
+## Deployment
+
+The site is split into two independently hosted pieces:
+
+- **Frontend** — Next.js, hosted on Netlify at `axiomsports.com`
+- **Backend** — Flask + SQLite, hosted on a DigitalOcean Droplet (or any Linux VPS) at `api.axiomsports.com`
+
+### Environment variables
+
+**Backend (set in `/etc/environment` or a `.env` file sourced by systemd):**
+```
+ALLOWED_ORIGINS=https://axiomsports.com,https://www.axiomsports.com
+PORT=5000
+API_HOST=0.0.0.0
+```
+
+**Frontend (set in the Netlify UI under Site → Environment variables):**
+```
+API_BASE_URL=https://api.axiomsports.com
+```
+
+For local dev, no env files are needed — defaults point everything to `localhost`.
+See `.env.example` (backend) and `web/.env.example` (frontend) for reference.
+
+### Production server setup (DigitalOcean Droplet)
+
+```bash
+# One-time: populate the cache, run backtest history, train the meta-gate
+python seed_db.py --lookback 7
+python backtest_history.py
+python train_meta_model.py --walk-forward --force
+
+# Keep Flask running via systemd (see README.md for full unit file)
+sudo systemctl start axiom-api
+sudo systemctl enable axiom-api
+```
+
+The Flask prefetch thread handles real-time data updates automatically on startup —
+no GitHub Actions or external cron is needed for picks freshness.
+
+### Weekly cron (model retraining)
+
+```
+0 3 * * 1  cd /opt/axiom && python train_meta_model.py --walk-forward >> /var/log/axiom-retrain.log 2>&1
+```
+
 ## Architecture
 
 Sports betting analytics pipeline: scrape odds → cache → transform → Naive Bayes picks → REST API → Next.js website.

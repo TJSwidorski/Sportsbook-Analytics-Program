@@ -133,9 +133,18 @@ def date_to_week(sport: str, d: date) -> int | None:
     return delta // 7 + 1
 
 
-def _load_per_sport_thresholds() -> tuple[dict[str, float], dict[str, dict[int, float]]]:
+def _thresholds_path(gate_name: str) -> str:
+    """Return the thresholds JSON path for a given gate name."""
+    fname = 'thresholds.json' if gate_name == 'logreg_v2' else f'thresholds_{gate_name}.json'
+    return _os.path.join(_os.path.dirname(__file__), 'data', 'meta_models', fname)
+
+
+def load_gate_thresholds(gate_name: str) -> tuple[dict[str, float], dict[str, dict[int, float]]]:
     """
-    Load per-sport meta-gate thresholds from thresholds.json.
+    Load per-sport meta-gate thresholds for a specific gate.
+
+    logreg_v2 reads from thresholds.json (backward-compat).
+    All other gate names read from thresholds_<gate_name>.json.
 
     Handles two JSON formats:
       Flat (old):   {sport: float, ...}
@@ -145,7 +154,7 @@ def _load_per_sport_thresholds() -> tuple[dict[str, float], dict[str, dict[int, 
       live_thresholds       — {sport: float} for daily picks (season_year=None)
       per_season_thresholds — {sport: {season_year_int: float}} for backtests
     """
-    path = _os.path.join(_os.path.dirname(__file__), 'data', 'meta_models', 'thresholds.json')
+    path = _thresholds_path(gate_name)
     if not _os.path.exists(path):
         return {}, {}
     with open(path) as f:
@@ -166,6 +175,10 @@ def _load_per_sport_thresholds() -> tuple[dict[str, float], dict[str, dict[int, 
                 per_season[k] = {int(yr): float(t) for yr, t in v['seasons'].items()}
 
     return live, per_season
+
+
+def _load_per_sport_thresholds() -> tuple[dict[str, float], dict[str, dict[int, float]]]:
+    return load_gate_thresholds('logreg_v2')
 
 
 _PER_SPORT_THRESHOLDS, _PER_SPORT_SEASON_THRESHOLDS = _load_per_sport_thresholds()

@@ -368,11 +368,9 @@ class TestPickEngineMetaGate(unittest.TestCase):
         self.assertIsNotNone(p.bet_line)
 
     def test_meta_threshold_respected(self):
-        # Patch config so the constructor arg is the only threshold source.
-        # (Without patching, thresholds.json overrides the constructor arg for logreg_v2.)
+        # Patch load_gate_thresholds so the constructor arg is the only threshold source.
         import config
-        with patch.object(config, 'PER_SPORT_THRESHOLDS', {}), \
-             patch.object(config, 'PER_SPORT_SEASON_THRESHOLDS', {}):
+        with patch.object(config, 'load_gate_thresholds', return_value=({}, {})):
             # Predicted=0.05; threshold=0.10 → blocked
             blocked = self._logreg_v2_engine_with_fake_gate(predicted_value=0.05, threshold=0.10)
             self.assertEqual(blocked.predict_all(_games_df())[0].pick, 'No Pick')

@@ -137,17 +137,82 @@ export function TerminalAbout({ palette }: Props) {
           </Section>
         </div>
 
+        {/* Legal disclaimer */}
+        <div
+          style={{
+            background: palette.surface,
+            border: `1px solid ${palette.border}`,
+            borderLeft: `2px solid ${palette.danger ?? palette.muted}`,
+            padding: 28,
+            marginTop: 8,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.danger ?? palette.muted,
+              letterSpacing: 1.5,
+              marginBottom: 16,
+            }}
+          >
+            ◆ LEGAL DISCLAIMER
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              lineHeight: 1.7,
+              color: palette.muted,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+            }}
+          >
+            <p style={{ margin: 0 }}>
+              <strong style={{ color: palette.text }}>For informational and entertainment purposes only.</strong>{' '}
+              Nothing on this site constitutes financial, investment, or sports-betting advice. Axiom is a
+              research project that models historical odds data. It does not recommend that you place any bet.
+            </p>
+            <p style={{ margin: 0 }}>
+              <strong style={{ color: palette.text }}>21+ and jurisdiction compliance required.</strong>{' '}
+              You must be at least 21 years of age (or the legal gambling age in your jurisdiction, whichever
+              is higher) to use this site. Sports betting is not legal in all jurisdictions. It is your sole
+              responsibility to know and comply with the laws of your location before placing any wager.
+            </p>
+            <p style={{ margin: 0 }}>
+              <strong style={{ color: palette.text }}>Past performance does not guarantee future results.</strong>{' '}
+              All backtest results, win rates, and unit figures displayed on this site reflect historical
+              model performance on completed games. Sports outcomes are inherently unpredictable and no model
+              can guarantee profitable results going forward.
+            </p>
+            <p style={{ margin: 0 }}>
+              <strong style={{ color: palette.text }}>Gambling involves risk.</strong>{' '}
+              Never bet more than you can afford to lose. If you or someone you know has a gambling problem,
+              help is available at{' '}
+              <span style={{ color: palette.text, textDecoration: 'underline' }}>1-800-GAMBLER</span>{' '}
+              (1-800-426-2537) or{' '}
+              <span style={{ color: palette.text, textDecoration: 'underline' }}>ncpgambling.org</span>.
+            </p>
+            <p style={{ margin: 0 }}>
+              <strong style={{ color: palette.text }}>No affiliation.</strong>{' '}
+              Axiom has no affiliation with any sportsbook, sports league, or gambling operator. Odds data
+              is sourced from publicly available information. This site does not accept bets.
+            </p>
+          </div>
+        </div>
+
         <div
           style={{
             fontFamily: FONT_MONO,
-            fontSize: 11,
+            fontSize: 10,
             color: palette.muted,
             letterSpacing: 1,
             textAlign: 'center',
-            paddingTop: 16,
+            paddingTop: 24,
+            opacity: 0.6,
           }}
         >
-          ◆ AXIOM IS A RESEARCH PROJECT. NOT FINANCIAL ADVICE. 21+ ONLY. ◆
+          © {new Date().getFullYear()} AXIOM SPORTS · FOR INFORMATIONAL PURPOSES ONLY · NOT FINANCIAL ADVICE · 21+
         </div>
       </div>
     </div>

@@ -18,6 +18,8 @@ Endpoints:
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import datetime
 import math
 import sys
@@ -27,7 +29,19 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 app = Flask(__name__)
-CORS(app)
+
+_raw_origins = os.environ.get(
+    'ALLOWED_ORIGINS',
+    'http://localhost:3000,http://localhost:3001',
+)
+CORS(app, origins=[o.strip() for o in _raw_origins.split(',')])
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=['200 per minute'],
+    storage_uri='memory://',
+)
 
 
 def _safe_num(value):
@@ -200,6 +214,7 @@ def picks_upcoming():
 
 
 @app.route('/api/backtest', methods=['POST'])
+@limiter.limit('5 per minute')
 def run_backtest():
     try:
         body = request.get_json(silent=True) or {}
@@ -486,4 +501,6 @@ if __name__ == '__main__':
     # waitress handles long requests + concurrent threads more reliably than
     # Werkzeug's dev server, which drops connections on Windows during multi-
     # second requests like /api/backtest.
-    serve(app, host='127.0.0.1', port=5000, threads=8, channel_timeout=600)
+    host = os.environ.get('API_HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 5000))
+    serve(app, host=host, port=port, threads=8, channel_timeout=600)

@@ -102,6 +102,8 @@ class MoneyLineAPI():
     """
     first_index = self.scores_indices[0]
     second_index = self.scores_indices[1]
+    if len(scores_data) <= second_index:
+      return []
     scores = []
     game_index = 0
     first_score = [scores_data[first_index], scores_data[second_index]]

@@ -14,12 +14,10 @@ Available keys via `build_model(name)`:
   'nb'           — Naive Bayes on raw moneyline tokens (legacy behavior)
   'nb_bucketed'  — Naive Bayes on implied-probability buckets (smoothed)
   'logreg'       — Logistic regression on de-vigged consensus probability
-  'logreg_v2'    — Logreg + offline-trained gradient-boosted-tree meta-gate
-                   that predicts realized flat-units. Only places bets when
-                   the predicted units exceed the engine's meta_threshold,
-                   replacing the legacy `EV >= 0` gate. Requires a fitted
-                   pickle at `data/meta_models/logreg_v2.pkl` (run
-                   `python train_meta_model.py` to create it).
+  'logreg_v2'    — Logreg + meta-gate predicting realized flat-units.
+  'logreg_v3'    — Logreg + meta-gate predicting realized kelly-units
+                   (walk-forward trained on 7 seasons; pickles at
+                   `data/meta_models/logreg_v3[.<year>].pkl`).
 """
 
 from __future__ import annotations
@@ -342,7 +340,8 @@ _MODEL_REGISTRY: dict[str, Callable[[], _ModelBase]] = {
     'nb':           lambda: NaiveBayesModel(bucketed=False),
     'nb_bucketed':  lambda: NaiveBayesModel(bucketed=True),
     'logreg':       lambda: LogisticRegressionModel(),
-    'logreg_v2':    lambda: LogregV2Model(),
+    'logreg_v2':    lambda: LogregV2Model(gate_name='logreg_v2'),
+    'logreg_v3':    lambda: LogregV2Model(gate_name='logreg_v3'),
 }
 
 

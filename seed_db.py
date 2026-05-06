@@ -20,6 +20,8 @@ import datetime
 import sys
 import time
 
+import pandas as pd
+
 import config
 import store
 from prefetch import iter_cache_keys
@@ -108,6 +110,11 @@ def seed_sport(
             except Exception as exc:
                 errors += 1
                 print(f'[seed] {sport}/{key}: FAILED — {type(exc).__name__}: {exc}')
+                # Mark no-game days (IndexError = empty page) as cached so they
+                # are not retried on every subsequent run. Other errors are also
+                # marked cached to avoid infinite retry loops; use --force to
+                # re-fetch any specific key.
+                store.save(sport, key, pd.DataFrame())
             if delay:
                 time.sleep(delay)
 

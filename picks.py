@@ -80,7 +80,8 @@ class PickEngine:
         """
         self.sport = sport
         self.model_type = model_type
-        if model_type == 'logreg_v2':
+        _gate_models = ('logreg_v2', 'logreg_v3')
+        if model_type in _gate_models:
             # Walk-forward threshold resolution — always out-of-sample:
             #   - Backtest (season_year set): use the threshold selected from
             #     seasons strictly before season_year. If no prior-season data
@@ -88,14 +89,14 @@ class PickEngine:
             #     (meta-gate natural signal, no lookahead bias).
             #   - Live picks (season_year=None): use the sport-level live
             #     threshold trained on all completed seasons.
-            _season_thresholds = config.PER_SPORT_SEASON_THRESHOLDS.get(sport, {})
+            # Each gate reads from its own thresholds file (logreg_v2 →
+            # thresholds.json, logreg_v3 → thresholds_logreg_v3.json).
+            _live_t, _season_t = config.load_gate_thresholds(model_type)
+            _season_thresholds = _season_t.get(sport, {})
             if season_year is not None:
-                if season_year in _season_thresholds:
-                    self.meta_threshold = _season_thresholds[season_year]
-                else:
-                    self.meta_threshold = 0.0
+                self.meta_threshold = _season_thresholds.get(season_year, 0.0)
             else:
-                self.meta_threshold = config.PER_SPORT_THRESHOLDS.get(sport, meta_threshold)
+                self.meta_threshold = _live_t.get(sport, meta_threshold)
         else:
             self.meta_threshold = meta_threshold
         self.season_year = season_year
