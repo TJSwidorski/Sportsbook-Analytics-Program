@@ -1,6 +1,6 @@
 # Axiom Sports
 
-Sports-betting analytics pipeline — scrapes odds, models win probabilities, sizes bets with fractional Kelly, and publishes daily picks through a REST API and Next.js terminal UI at axiomsports.com.
+Sports-betting analytics pipeline — scrapes odds, models win probabilities, sizes bets with fractional Kelly, and publishes daily picks through a REST API and Next.js terminal UI at axiompicks.com.
 
 > **For informational and entertainment purposes only. Not financial advice. 21+. Gambling may be illegal in your jurisdiction. Problem Gambling Helpline: 1-800-GAMBLER.**
 
@@ -123,12 +123,12 @@ Create `/opt/axiom/.env`:
 ```
 API_HOST=127.0.0.1
 PORT=5000
-ALLOWED_ORIGINS=https://axiomsports.com,https://www.axiomsports.com
+ALLOWED_ORIGINS=https://axiompicks.com,https://www.axiompicks.com
 ```
 
 **6. Point a subdomain at the droplet**
 
-In your DNS panel (e.g. Cloudflare), add an A record: `api.axiomsports.com -> <droplet-ip>`.
+In your DNS panel (e.g. Cloudflare), add an A record: `api.axiompicks.com -> <droplet-ip>`.
 
 **7. Configure nginx + SSL**
 
@@ -136,7 +136,7 @@ In your DNS panel (e.g. Cloudflare), add an A record: `api.axiomsports.com -> <d
 cat > /etc/nginx/sites-available/axiom << 'EOF'
 server {
     listen 80;
-    server_name api.axiomsports.com;
+    server_name api.axiompicks.com;
 
     location / {
         proxy_pass http://127.0.0.1:5000;
@@ -149,7 +149,7 @@ EOF
 
 ln -s /etc/nginx/sites-available/axiom /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
-certbot --nginx -d api.axiomsports.com
+certbot --nginx -d api.axiompicks.com
 ```
 
 **8. Set up weekly model retraining (optional)**
@@ -180,12 +180,12 @@ Build settings:
 In Netlify: Site settings -> Environment variables -> Add:
 
 ```
-API_BASE_URL = https://api.axiomsports.com
+API_BASE_URL = https://api.axiompicks.com
 ```
 
 **3. Set the custom domain**
 
-Netlify: Site settings -> Domain management -> Add custom domain -> `axiomsports.com`.
+Netlify: Site settings -> Domain management -> Add custom domain -> `axiompicks.com`.
 
 Add the CNAME/A records Netlify shows you in your DNS panel. Netlify provisions SSL automatically.
 

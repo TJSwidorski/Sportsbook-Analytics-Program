@@ -212,7 +212,7 @@ export function TerminalAbout({ palette }: Props) {
             opacity: 0.6,
           }}
         >
-          © {new Date().getFullYear()} AXIOM SPORTS · FOR INFORMATIONAL PURPOSES ONLY · NOT FINANCIAL ADVICE · 21+
+          © {new Date().getFullYear()} AXIOM PICKS · FOR INFORMATIONAL PURPOSES ONLY · NOT FINANCIAL ADVICE · 21+
         </div>
       </div>
     </div>

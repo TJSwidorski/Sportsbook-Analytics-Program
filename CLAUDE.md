@@ -105,21 +105,21 @@ threshold automatically during backtests and the live threshold for daily picks.
 
 The site is split into two independently hosted pieces:
 
-- **Frontend** — Next.js, hosted on Netlify at `axiomsports.com`
-- **Backend** — Flask + SQLite, hosted on a DigitalOcean Droplet (or any Linux VPS) at `api.axiomsports.com`
+- **Frontend** — Next.js, hosted on Netlify at `axiompicks.com`
+- **Backend** — Flask + SQLite, hosted on a DigitalOcean Droplet (or any Linux VPS) at `api.axiompicks.com`
 
 ### Environment variables
 
 **Backend (set in `/etc/environment` or a `.env` file sourced by systemd):**
 ```
-ALLOWED_ORIGINS=https://axiomsports.com,https://www.axiomsports.com
+ALLOWED_ORIGINS=https://axiompicks.com,https://www.axiompicks.com
 PORT=5000
 API_HOST=0.0.0.0
 ```
 
 **Frontend (set in the Netlify UI under Site → Environment variables):**
 ```
-API_BASE_URL=https://api.axiomsports.com
+API_BASE_URL=https://api.axiompicks.com
 ```
 
 For local dev, no env files are needed — defaults point everything to `localhost`.
