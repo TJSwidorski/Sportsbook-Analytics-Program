@@ -11,12 +11,47 @@ interface Props {
   palette: Palette
   pick: RawPick
   sport: string
+  gameTime?: string
   onClose: () => void
+}
+
+// Kept for potential future "opening line" feature — index 0 of lines arrays
+// const OPENING_LINE_LABEL = 'Open'
+
+const SB_DOMAINS: Record<string, string> = {
+  DraftKings: 'draftkings.com',
+  FanDuel: 'fanduel.com',
+  BetMGM: 'betmgm.com',
+  Caesars: 'caesars.com',
+  'Caesars Sportsbook': 'caesars.com',
+  PointsBet: 'pointsbet.com',
+  Unibet: 'unibet.com',
+  BetRivers: 'betrivers.com',
+  WynnBet: 'wynnbet.com',
+  Barstool: 'barstool.com',
+  'Barstool Sports': 'barstool.com',
+  bet365: 'bet365.com',
+  Betway: 'betway.com',
+  'Hard Rock': 'hardrock.bet',
+  'Hard Rock Bet': 'hardrock.bet',
+  BookiePro: 'bookiepro.com',
+  Bodog: 'bodog.com',
+  '5Dimes': '5dimes.eu',
+  'Golden Nugget': 'goldennugget.com',
+  Tipico: 'tipico.com',
+  Pinnacle: 'pinnacle.com',
+  'ESPN BET': 'espnbet.com',
+  Fliff: 'getfliff.com',
+  Fanatics: 'fanatics.com',
+}
+
+function bookDomain(sb: string): string | null {
+  return SB_DOMAINS[sb] ?? null
 }
 
 function impliedFromMoneyline(line: string): number | null {
   const trimmed = line.trim()
-  if (!trimmed) return null
+  if (!trimmed || trimmed === '—') return null
   const sign = trimmed[0]
   const numStr = trimmed.replace(/[^0-9.]/g, '')
   if (!numStr) return null
@@ -26,7 +61,14 @@ function impliedFromMoneyline(line: string): number | null {
   return 100 / (n + 100)
 }
 
-export function DetailPanel({ palette, pick, sport, onClose }: Props) {
+interface SbRow {
+  sb: string
+  awayLine: string
+  homeLine: string
+  domain: string | null
+}
+
+export function DetailPanel({ palette, pick, sport, gameTime, onClose }: Props) {
   const awayAbbr = pick.away_abbr || (pick.away_team ?? '?').slice(0, 3).toUpperCase()
   const homeAbbr = pick.home_abbr || (pick.home_team ?? '?').slice(0, 3).toUpperCase()
   const teamLabel = pick.pick === 'Away' ? awayAbbr : pick.pick === 'Home' ? homeAbbr : pick.pick
@@ -69,27 +111,26 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
         pick.bet_line ? `. We're betting them at ${pick.bet_line}.` : '.'
       }`
 
-  const renderLineRow = (line: string) => {
-    const implied = impliedFromMoneyline(line)
-    return (
-      <div
-        key={line}
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          fontFamily: FONT_MONO,
-          fontSize: 11,
-          color: palette.text,
-          padding: '2px 0',
-        }}
-      >
-        <span>{line}</span>
-        <span style={{ color: palette.muted }}>
-          {implied != null ? `${(implied * 100).toFixed(1)}% implied` : '—'}
-        </span>
-      </div>
-    )
-  }
+  // Build sportsbook rows — skip "Open" (index 0 / label 'Open') since it's the opening line
+  const hasSbNames = (pick.sportsbooks?.length ?? 0) > 0
+  const pickedSide = pick.pick === 'Away' ? 'away' : pick.pick === 'Home' ? 'home' : null
+
+  const sbRows: SbRow[] = hasSbNames
+    ? (pick.sportsbooks ?? []).reduce<SbRow[]>((acc, sb, i) => {
+        if (sb === 'Open') return acc
+        const awayLine = pick.away_lines?.[i] ?? '—'
+        const homeLine = pick.home_lines?.[i] ?? '—'
+        acc.push({ sb, awayLine, homeLine, domain: bookDomain(sb) })
+        return acc
+      }, [])
+    : []
+
+  const bestSbIdx =
+    pickedSide && pick.bet_line
+      ? sbRows.findIndex((r) =>
+          pickedSide === 'away' ? r.awayLine === pick.bet_line : r.homeLine === pick.bet_line,
+        )
+      : -1
 
   return (
     <div
@@ -147,7 +188,7 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
         }}
       >
         <SportMark palette={palette} sport={sport} size={12} />
-        {sport.toUpperCase()} / TBD
+        {sport.toUpperCase()} / {gameTime ?? 'TBD'}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
         <TeamLogo palette={palette} sport={sport} abbr={awayAbbr} team={pick.away_team} size={48} />
@@ -211,12 +252,7 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
         <div style={{ display: 'flex', gap: 24, marginTop: 16 }}>
           <div>
             <div
-              style={{
-                fontFamily: FONT_MONO,
-                fontSize: 10,
-                color: palette.muted,
-                letterSpacing: 1,
-              }}
+              style={{ fontFamily: FONT_MONO, fontSize: 10, color: palette.muted, letterSpacing: 1 }}
               title="Recommended bet size as a percentage of bankroll (Kelly-sized)."
             >
               UNITS
@@ -228,24 +264,12 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
           </div>
           <div>
             <div
-              style={{
-                fontFamily: FONT_MONO,
-                fontSize: 10,
-                color: palette.muted,
-                letterSpacing: 1,
-              }}
+              style={{ fontFamily: FONT_MONO, fontSize: 10, color: palette.muted, letterSpacing: 1 }}
               title="How much we expect to win (or lose, if negative) per $1 wagered."
             >
               EDGE
             </div>
-            <div
-              style={{
-                fontFamily: FONT_MONO,
-                fontSize: 16,
-                fontWeight: 600,
-                color: edgeColor,
-              }}
-            >
+            <div style={{ fontFamily: FONT_MONO, fontSize: 16, fontWeight: 600, color: edgeColor }}>
               {ev}
             </div>
             <div style={{ fontFamily: FONT_MONO, fontSize: 9, color: palette.muted, marginTop: 2 }}>
@@ -254,12 +278,7 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
           </div>
           <div>
             <div
-              style={{
-                fontFamily: FONT_MONO,
-                fontSize: 10,
-                color: palette.muted,
-                letterSpacing: 1,
-              }}
+              style={{ fontFamily: FONT_MONO, fontSize: 10, color: palette.muted, letterSpacing: 1 }}
               title="How sure the model is. HIGH = strong signal, LEAN = barely above 50/50."
             >
               CONFIDENCE
@@ -318,7 +337,157 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
         ))}
       </div>
 
-      {(pick.away_lines?.length || pick.home_lines?.length) ? (
+      {/* Sportsbook odds table */}
+      {sbRows.length > 0 ? (
+        <div style={{ marginBottom: 20 }}>
+          <div
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.muted,
+              letterSpacing: 1,
+              marginBottom: 6,
+            }}
+          >
+            SPORTSBOOK ODDS
+          </div>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: palette.muted, marginBottom: 10 }}>
+            Current moneylines across books.
+            {bestSbIdx >= 0 && (
+              <span style={{ color: palette.accent }}> Highlighted = where we&apos;re taking the bet.</span>
+            )}
+          </div>
+
+          {/* Column headers */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '16px 1fr 88px 88px',
+              gap: '2px 8px',
+              alignItems: 'center',
+              paddingBottom: 6,
+              marginBottom: 2,
+              borderBottom: `1px solid ${palette.border}`,
+            }}
+          >
+            <div />
+            <div style={{ fontFamily: FONT_MONO, fontSize: 9, color: palette.muted, letterSpacing: 1 }}>
+              BOOK
+            </div>
+            <div
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 9,
+                color: palette.muted,
+                letterSpacing: 1,
+                textAlign: 'right',
+              }}
+            >
+              {awayAbbr}
+            </div>
+            <div
+              style={{
+                fontFamily: FONT_MONO,
+                fontSize: 9,
+                color: palette.muted,
+                letterSpacing: 1,
+                textAlign: 'right',
+              }}
+            >
+              {homeAbbr}
+            </div>
+          </div>
+
+          {/* Book rows */}
+          {sbRows.map((row, idx) => {
+            const isBest = idx === bestSbIdx
+            const awayImpl = impliedFromMoneyline(row.awayLine)
+            const homeImpl = impliedFromMoneyline(row.homeLine)
+            return (
+              <div
+                key={row.sb}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '16px 1fr 88px 88px',
+                  gap: '2px 8px',
+                  alignItems: 'center',
+                  padding: '5px 6px',
+                  marginLeft: -6,
+                  marginRight: -6,
+                  background: isBest ? `${palette.accent}15` : 'transparent',
+                  borderLeft: isBest ? `2px solid ${palette.accent}` : '2px solid transparent',
+                }}
+              >
+                {/* favicon */}
+                <div style={{ width: 16, height: 16, display: 'flex', alignItems: 'center' }}>
+                  {row.domain ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={`https://www.google.com/s2/favicons?domain=${row.domain}&sz=16`}
+                      width={14}
+                      height={14}
+                      alt=""
+                      style={{ borderRadius: 2, opacity: 0.85 }}
+                      onError={(e) => {
+                        ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                      }}
+                    />
+                  ) : null}
+                </div>
+
+                {/* sportsbook name */}
+                <div
+                  style={{
+                    fontFamily: FONT_MONO,
+                    fontSize: 11,
+                    color: isBest ? palette.text : palette.muted,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {row.sb}
+                </div>
+
+                {/* away line */}
+                <div style={{ fontFamily: FONT_MONO, fontSize: 11, textAlign: 'right' }}>
+                  <span
+                    style={{
+                      color: isBest && pickedSide === 'away' ? palette.accent : palette.text,
+                      fontWeight: isBest && pickedSide === 'away' ? 600 : 400,
+                    }}
+                  >
+                    {row.awayLine}
+                  </span>
+                  {awayImpl != null && (
+                    <span style={{ color: palette.muted, fontSize: 9, display: 'block' }}>
+                      {(awayImpl * 100).toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+
+                {/* home line */}
+                <div style={{ fontFamily: FONT_MONO, fontSize: 11, textAlign: 'right' }}>
+                  <span
+                    style={{
+                      color: isBest && pickedSide === 'home' ? palette.accent : palette.text,
+                      fontWeight: isBest && pickedSide === 'home' ? 600 : 400,
+                    }}
+                  >
+                    {row.homeLine}
+                  </span>
+                  {homeImpl != null && (
+                    <span style={{ color: palette.muted, fontSize: 9, display: 'block' }}>
+                      {(homeImpl * 100).toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (pick.away_lines?.length || pick.home_lines?.length) ? (
+        /* Fallback: no sportsbook names — show raw lines */
         <div style={{ marginBottom: 20 }}>
           <div
             style={{
@@ -338,13 +507,47 @@ export function DetailPanel({ palette, pick, sport, onClose }: Props) {
             <div style={{ color: palette.muted, marginBottom: 4 }}>{awayAbbr}</div>
             <div style={{ marginBottom: 12 }}>
               {(pick.away_lines ?? []).length
-                ? (pick.away_lines ?? []).map(renderLineRow)
+                ? (pick.away_lines ?? []).map((line) => {
+                    const implied = impliedFromMoneyline(line)
+                    return (
+                      <div
+                        key={line}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          padding: '2px 0',
+                        }}
+                      >
+                        <span>{line}</span>
+                        <span style={{ color: palette.muted }}>
+                          {implied != null ? `${(implied * 100).toFixed(1)}% implied` : '—'}
+                        </span>
+                      </div>
+                    )
+                  })
                 : '—'}
             </div>
             <div style={{ color: palette.muted, marginBottom: 4 }}>{homeAbbr}</div>
             <div>
               {(pick.home_lines ?? []).length
-                ? (pick.home_lines ?? []).map(renderLineRow)
+                ? (pick.home_lines ?? []).map((line) => {
+                    const implied = impliedFromMoneyline(line)
+                    return (
+                      <div
+                        key={line}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          padding: '2px 0',
+                        }}
+                      >
+                        <span>{line}</span>
+                        <span style={{ color: palette.muted }}>
+                          {implied != null ? `${(implied * 100).toFixed(1)}% implied` : '—'}
+                        </span>
+                      </div>
+                    )
+                  })
                 : '—'}
             </div>
           </div>

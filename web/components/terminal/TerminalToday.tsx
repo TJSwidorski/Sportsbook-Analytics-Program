@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import type { Palette } from '@/lib/palette'
 import { FONT_MONO } from '@/lib/palette'
 import { useUpcomingPicks, type RawPick } from '@/lib/use-upcoming-picks'
+import { useEspnSchedule, findEspnGame } from '@/lib/use-espn-schedule'
 import { GameCard } from './GameCard'
 import { DetailPanel } from './DetailPanel'
 import { SportFilter } from './SportFilter'
@@ -22,6 +23,7 @@ interface Props {
 interface SelectedPick {
   raw: RawPick
   sport: string
+  gameTime: string
 }
 
 interface FlatItem {
@@ -64,6 +66,13 @@ function sortItems(items: FlatItem[], mode: SortMode): FlatItem[] {
   return scored.map((s) => s.item)
 }
 
+function getAbbrs(raw: RawPick): { awayAbbr: string; homeAbbr: string } {
+  return {
+    awayAbbr: raw.away_abbr || (raw.away_team ?? '?').slice(0, 3).toUpperCase(),
+    homeAbbr: raw.home_abbr || (raw.home_team ?? '?').slice(0, 3).toUpperCase(),
+  }
+}
+
 export function TerminalToday({ palette }: Props) {
   const today = new Date().toISOString().slice(0, 10)
   const [model, setModel] = useState('logreg_v2')
@@ -86,11 +95,25 @@ export function TerminalToday({ palette }: Props) {
     for (const item of all) set.add(item.sport.toUpperCase())
     return Array.from(set).sort()
   }, [all])
+
+  // Fetch ESPN schedule for today's sports (for game times + started-game filtering)
+  const espnSchedule = useEspnSchedule(today, sportsAvail)
+
   const filtered = useMemo(() => {
     let base = filter === 'ALL' ? all : all.filter((x) => x.sport.toUpperCase() === filter)
     if (picksOnly) base = base.filter((x) => x.raw.pick && x.raw.pick !== 'No Pick' && x.raw.ev != null && x.raw.ev >= 0)
     return sortItems(base, sort)
   }, [all, filter, sort, picksOnly])
+
+  // Remove today's games that have already started
+  const displayItems = useMemo(() => {
+    return filtered.filter((item) => {
+      if (item.bucket !== 'today') return true
+      const { awayAbbr, homeAbbr } = getAbbrs(item.raw)
+      const match = findEspnGame(espnSchedule[item.sport] ?? [], awayAbbr, homeAbbr)
+      return !(match?.started ?? false)
+    })
+  }, [filtered, espnSchedule])
 
   const dateLabel = new Date().toLocaleDateString('en-US', {
     month: '2-digit',
@@ -212,7 +235,7 @@ export function TerminalToday({ palette }: Props) {
             ERROR: {error}
           </div>
         )}
-        {status === 'ready' && filtered.length === 0 && (
+        {status === 'ready' && displayItems.length === 0 && (
           <div
             style={{
               padding: 48,
@@ -222,8 +245,10 @@ export function TerminalToday({ palette }: Props) {
               color: palette.muted,
             }}
           >
-            {picksOnly
-              ? 'Our model hasn\'t found any profitable games today.'
+            {filtered.length > 0
+              ? "All of today's games have already started."
+              : picksOnly
+              ? "Our model hasn't found any profitable games today."
               : 'NO GAMES FOR THIS FILTER.'}
           </div>
         )}
@@ -235,14 +260,18 @@ export function TerminalToday({ palette }: Props) {
             gap: 12,
           }}
         >
-          {filtered.map((item, i) => {
-            const card = rawPickToGameCard(item.raw, item.sport, item.bucket === 'tomorrow' ? 'TOMORROW' : 'TODAY')
+          {displayItems.map((item, i) => {
+            const { awayAbbr, homeAbbr } = getAbbrs(item.raw)
+            const espnMatch = findEspnGame(espnSchedule[item.sport] ?? [], awayAbbr, homeAbbr)
+            const gameTime =
+              espnMatch?.startTimeLocal ?? (item.bucket === 'tomorrow' ? 'TOMORROW' : 'TODAY')
+            const card = rawPickToGameCard(item.raw, item.sport, gameTime)
             return (
               <GameCard
                 key={`${item.sport}-${item.raw.game_index}-${i}`}
                 g={card}
                 palette={palette}
-                onClick={() => setSelected({ raw: item.raw, sport: item.sport })}
+                onClick={() => setSelected({ raw: item.raw, sport: item.sport, gameTime })}
               />
             )
           })}
@@ -254,6 +283,7 @@ export function TerminalToday({ palette }: Props) {
           palette={palette}
           pick={selected.raw}
           sport={selected.sport}
+          gameTime={selected.gameTime}
           onClose={() => setSelected(null)}
         />
       )}
