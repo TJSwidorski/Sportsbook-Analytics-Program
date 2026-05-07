@@ -23,11 +23,21 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'about', label: 'ABOUT' },
 ]
 
+const TICKER_REFRESH_MS = 5 * 60 * 1000   // match backend PICKS_REFRESH_INTERVAL
+
 function TickerStrip() {
   const today = new Date().toISOString().slice(0, 10)
   const { data: history } = useHistory()
   const { series } = usePerformance(30)
-  const { data: upcoming } = useUpcomingPicks(today)
+  const { data: upcoming, refetch: refetchUpcoming } = useUpcomingPicks(today)
+
+  // Re-fetch in sync with the server's 5-minute picks-refresh cycle so the
+  // UPDATED timestamp and open-picks count stay current throughout the day.
+  useEffect(() => {
+    const id = setInterval(refetchUpcoming, TICKER_REFRESH_MS)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const palette = getPalette(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
@@ -44,12 +54,19 @@ function TickerStrip() {
   const openPicks = upcoming
     ? Object.values(upcoming.sports).reduce((s, x) => s + x.today.length + x.tomorrow.length, 0)
     : 0
-  const updated = new Date().toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
+
+  // Show the server-stamped scrape time so users know how fresh the picks are.
+  const updated = upcoming?.cached_at
+    ? new Date(upcoming.cached_at * 1000).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : new Date().toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
 
   return (
     <div

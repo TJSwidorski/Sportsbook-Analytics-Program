@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Palette } from '@/lib/palette'
 import { FONT_MONO } from '@/lib/palette'
 import { useUpcomingPicks, type RawPick } from '@/lib/use-upcoming-picks'
@@ -78,8 +78,15 @@ export function TerminalToday({ palette }: Props) {
   const [model, setModel] = useState('logreg_v2')
 
   // Both models are fetched in parallel on mount so switching is instant.
-  const { status: statusV1, data: dataV1, error: errorV1 } = useUpcomingPicks(today, 'logreg')
-  const { status: statusV2, data: dataV2, error: errorV2 } = useUpcomingPicks(today, 'logreg_v2')
+  const { status: statusV1, data: dataV1, error: errorV1, refetch: refetchV1 } = useUpcomingPicks(today, 'logreg')
+  const { status: statusV2, data: dataV2, error: errorV2, refetch: refetchV2 } = useUpcomingPicks(today, 'logreg_v2')
+
+  // Poll every 5 minutes (matches backend refresh cycle) to pick up line changes.
+  useEffect(() => {
+    const id = setInterval(() => { refetchV1(); refetchV2() }, 5 * 60 * 1000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const status = model === 'logreg_v2' ? statusV2 : statusV1
   const data   = model === 'logreg_v2' ? dataV2   : dataV1
   const error  = model === 'logreg_v2' ? errorV2  : errorV1

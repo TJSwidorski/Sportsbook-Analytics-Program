@@ -31,6 +31,7 @@ export interface UpcomingResponse {
   date: string
   tomorrow_date: string
   sports: Record<string, SportSlate>
+  cached_at?: number   // Unix timestamp of the last server-side SBR scrape
   error?: string
 }
 

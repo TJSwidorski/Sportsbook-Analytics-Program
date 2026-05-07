@@ -212,6 +212,7 @@ def _build_upcoming_payload(
         'tomorrow_date': tomorrow_str,
         'model': model_type,
         'meta_threshold': meta_threshold,
+        'cached_at': int(time.time()),   # Unix timestamp of this scrape/compute cycle
         'sports': {
             sport: {
                 'today': [_pick_to_dict(p) for p in buckets['today']],
