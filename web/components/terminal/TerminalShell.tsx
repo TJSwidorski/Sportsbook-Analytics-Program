@@ -150,8 +150,7 @@ export function TerminalShell() {
               letterSpacing: 1,
             }}
           >
-            AXIOM
-            <span style={{ color: palette.muted, fontWeight: 400 }}>/PICKS</span>
+            AXIOM<span style={{ color: palette.muted, fontWeight: 400 }}> PICKS</span>
           </div>
         </div>
         <nav style={{ display: 'flex', gap: 4, fontFamily: FONT_MONO, fontSize: 12 }}>
