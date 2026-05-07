@@ -24,6 +24,10 @@ data/
 graphify-out/
 .graphify_*
 
+# Logs
+logs/
+*.log
+
 # OS
 .DS_Store
 Thumbs.db
