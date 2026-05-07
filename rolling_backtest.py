@@ -174,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sport', help='Comma-separated sports (default: all)')
     parser.add_argument('--window', type=int, default=30, help='Window in days (default: 30)')
+    parser.add_argument('--all-windows', action='store_true', help='Run all three windows (7, 30, 90) for all models')
     parser.add_argument('--end-date', help='YYYY-MM-DD (default: today)')
     parser.add_argument('--model', default='logreg')
     parser.add_argument('--force', action='store_true')
@@ -194,18 +195,30 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     started = time.time()
-    statuses = compute_all_rolling(
-        end_date=end_date,
-        window_days=args.window,
-        model=args.model,
-        force=args.force,
-        sports=sports,
-    )
+    if args.all_windows:
+        for model in ('logreg', 'logreg_v2'):
+            for window in (7, 30, 90):
+                statuses = compute_all_rolling(
+                    end_date=end_date,
+                    window_days=window,
+                    model=model,
+                    force=args.force,
+                    sports=sports,
+                )
+                for sport, status in statuses.items():
+                    print(f'[rolling] {model} {window}d {sport}: {status}')
+    else:
+        statuses = compute_all_rolling(
+            end_date=end_date,
+            window_days=args.window,
+            model=args.model,
+            force=args.force,
+            sports=sports,
+        )
+        for sport, status in statuses.items():
+            print(f'[rolling] {sport}: {status}')
     elapsed = time.time() - started
-
-    for sport, status in statuses.items():
-        print(f'[rolling] {sport}: {status}')
-    print(f'[rolling] window={args.window}d end={end_date} elapsed={elapsed:.1f}s')
+    print(f'[rolling] elapsed={elapsed:.1f}s')
     return 0
 
 
