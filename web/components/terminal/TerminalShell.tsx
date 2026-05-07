@@ -151,7 +151,7 @@ export function TerminalShell() {
             }}
           >
             AXIOM
-            <span style={{ color: palette.muted, fontWeight: 400 }}>/TERMINAL</span>
+            <span style={{ color: palette.muted, fontWeight: 400 }}>/PICKS</span>
           </div>
         </div>
         <nav style={{ display: 'flex', gap: 4, fontFamily: FONT_MONO, fontSize: 12 }}>
