@@ -67,7 +67,14 @@ function sortItems(items: FlatItem[], mode: SortMode): FlatItem[] {
 export function TerminalToday({ palette }: Props) {
   const today = new Date().toISOString().slice(0, 10)
   const [model, setModel] = useState('logreg_v2')
-  const { status, data, error } = useUpcomingPicks(today, model)
+
+  // Both models are fetched in parallel on mount so switching is instant.
+  const { status: statusV1, data: dataV1, error: errorV1 } = useUpcomingPicks(today, 'logreg')
+  const { status: statusV2, data: dataV2, error: errorV2 } = useUpcomingPicks(today, 'logreg_v2')
+  const status = model === 'logreg_v2' ? statusV2 : statusV1
+  const data   = model === 'logreg_v2' ? dataV2   : dataV1
+  const error  = model === 'logreg_v2' ? errorV2  : errorV1
+
   const [selected, setSelected] = useState<SelectedPick | null>(null)
   const [filter, setFilter] = useState<string>('ALL')
   const [sort, setSort] = useState<SortMode>('EDGE')
