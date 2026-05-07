@@ -75,7 +75,7 @@ export function TerminalToday({ palette }: Props) {
   }, [all])
   const filtered = useMemo(() => {
     let base = filter === 'ALL' ? all : all.filter((x) => x.sport.toUpperCase() === filter)
-    if (picksOnly) base = base.filter((x) => x.raw.pick && x.raw.pick !== 'No Pick')
+    if (picksOnly) base = base.filter((x) => x.raw.pick && x.raw.pick !== 'No Pick' && x.raw.ev != null && x.raw.ev >= 0)
     return sortItems(base, sort)
   }, [all, filter, sort, picksOnly])
 
@@ -138,7 +138,7 @@ export function TerminalToday({ palette }: Props) {
                 border: `1px solid ${picksOnly ? palette.accent : palette.border}`,
               }}
             >
-              PICKS ONLY
+              SUGGESTED BETS
             </button>
             <SortFilter palette={palette} value={sort} onChange={setSort} />
             <SportFilter
