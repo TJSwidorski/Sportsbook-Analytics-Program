@@ -253,7 +253,18 @@ def picks_upcoming():
         if cached is not None:
             return jsonify(cached)
 
-    # Slow path: cache miss (first request of the day or custom threshold)
+        # Cache cold (server just started): wait for the background refresh loop
+        # to warm it instead of launching a second expensive computation on the
+        # same 1vCPU.  Sleeping here costs no CPU; the loop does the real work.
+        # 45s ceiling stays under nginx's default proxy_read_timeout of 60s.
+        for _ in range(45):
+            time.sleep(1)
+            cached = _cache_get(date_str, model_type)
+            if cached is not None:
+                return jsonify(cached)
+        # Background loop didn't finish in 45s — fall through to synchronous compute
+
+    # Slow path: timed-out cache wait or custom meta_threshold
     try:
         from runner import run_all_sports_upcoming
         results = run_all_sports_upcoming(
