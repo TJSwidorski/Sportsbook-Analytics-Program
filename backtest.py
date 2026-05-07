@@ -163,14 +163,14 @@ def _season_year_for_key(
 
 def _training_keys_in_season(sport: str, test_key: str) -> list[str]:
     """
-    Return all cached keys for sport within the same season as test_key,
-    strictly before test_key. Walk-forward safe.
+    Return cached keys for training: the full previous season plus the current
+    season-to-date (strictly before test_key). Walk-forward safe.
 
-    For date-based sports, test_key is 'YYYY-MM-DD' and the season window is
-    derived from config.SPORTS[sport]['season'].
-    For week-based sports, test_key is a week number string; the cache only
-    holds one season's worth of week keys (each save replaces prior weeks
-    with the same number), so we just return all earlier numeric weeks.
+    Including the previous season eliminates cold-start sparsity at the
+    beginning of each new season without leaking future data.
+
+    Week-based sports store week numbers as keys — previous season weeks are
+    overwritten in the cache — so they fall back to all earlier numeric weeks.
     """
     available = store.list_available(sport)
     cfg = config.SPORTS[sport]
@@ -178,10 +178,11 @@ def _training_keys_in_season(sport: str, test_key: str) -> list[str]:
     if cfg['date_type'] == 'date':
         test_d = datetime.date.fromisoformat(test_key)
         season_start, _ = _season_window_for(sport, test_d)
-        season_start_iso = season_start.strftime('%Y-%m-%d')
+        prev_season_start, _ = _season_window_for(sport, season_start - datetime.timedelta(days=1))
+        prev_start_iso = prev_season_start.strftime('%Y-%m-%d')
         return [
             k for k in available
-            if season_start_iso <= k < test_key
+            if prev_start_iso <= k < test_key
         ]
 
     test_week = int(test_key)

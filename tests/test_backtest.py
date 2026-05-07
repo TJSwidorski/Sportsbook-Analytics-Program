@@ -35,20 +35,20 @@ class TestSeasonWindow(unittest.TestCase):
 
 class TestTrainingKeysInSeason(unittest.TestCase):
     @patch('backtest.store.list_available')
-    def test_date_based_filters_to_season(self, mock_list):
-        # Simulate an NBA cache that contains entries from two seasons
-        # plus an out-of-season summer day. The 2025-01-15 test date should
-        # only see entries within the 2024-25 season window, strictly before it.
+    def test_date_based_includes_prev_season(self, mock_list):
+        # Training data = previous season + current season-to-date (strictly
+        # before the test key). Off-season gaps have no cached data in practice.
         mock_list.return_value = [
-            '2023-12-20',  # previous season — must be excluded
-            '2024-08-15',  # offseason — must be excluded
-            '2024-10-05',  # in this season, before test
-            '2024-11-20',  # in this season, before test
+            '2022-12-20',  # two seasons back — must be excluded
+            '2023-12-20',  # previous season (NBA 2023-24 Oct–Jun) — included
+            '2024-08-15',  # off-season gap — included (never cached in practice)
+            '2024-10-05',  # current season, before test — included
+            '2024-11-20',  # current season, before test — included
             '2025-01-15',  # the test key itself — must be excluded
             '2025-02-10',  # after test — must be excluded
         ]
         keys = _training_keys_in_season('nba', '2025-01-15')
-        self.assertEqual(keys, ['2024-10-05', '2024-11-20'])
+        self.assertEqual(keys, ['2023-12-20', '2024-08-15', '2024-10-05', '2024-11-20'])
 
     @patch('backtest.store.list_available')
     def test_week_based_keeps_earlier_weeks(self, mock_list):
@@ -60,10 +60,15 @@ class TestTrainingKeysInSeason(unittest.TestCase):
         self.assertEqual(sorted(keys), ['1', '2', '3'])
 
     @patch('backtest.store.list_available')
-    def test_first_day_of_season_returns_empty(self, mock_list):
-        mock_list.return_value = ['2024-10-01']
+    def test_first_day_of_season_uses_prev_season(self, mock_list):
+        # On day 1 of the 2024-25 NBA season, previous-season data is available
+        # for training. Two-seasons-back data is excluded.
+        mock_list.return_value = ['2022-12-01', '2023-11-15', '2024-03-20', '2024-10-01']
         keys = _training_keys_in_season('nba', '2024-10-01')
-        self.assertEqual(keys, [])
+        # NBA 2023-24: Oct 2023 – Jun 2024; NBA 2022-23: Oct 2022 – Jun 2023
+        # prev_season_start = 2023-10-01, so 2023-11-15 and 2024-03-20 included;
+        # 2022-12-01 (two seasons back) and 2024-10-01 (test key) excluded.
+        self.assertEqual(keys, ['2023-11-15', '2024-03-20'])
 
 
 class TestMaxDrawdown(unittest.TestCase):

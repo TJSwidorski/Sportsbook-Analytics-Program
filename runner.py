@@ -24,6 +24,7 @@ import sports as sp
 import store
 from picks import Pick, PickEngine
 from retrieve import SportsbookReviewAPI
+from backtest import _season_window_for
 
 # Maps sport key → (sports.py class, date_type)
 _SPORT_CLASS = {
@@ -52,30 +53,33 @@ def _cache_key(sport: str, date_or_week) -> str:
     return str(date_or_week)
 
 
-def _training_dates(sport: str, anchor: datetime.date, window: int) -> list[str]:
-    """Return date strings for the window days before anchor (exclusive)."""
+def _training_keys_for_date(sport: str, test_key: str) -> list[str]:
+    """
+    Return cached keys for training: the full previous season plus the current
+    season-to-date (strictly before test_key). This eliminates the cold-start
+    problem at the start of each season while matching the Backtester's logic.
+
+    Week-based sports (NFL, NCAAF) store week numbers as keys — previous season
+    weeks are overwritten in the cache — so they fall back to all earlier weeks.
+    """
+    available = store.list_available(sport)
     cfg = config.SPORTS[sport]
-    date_type = cfg['date_type']
-    keys = []
-    for offset in range(1, window + 1):
-        d = anchor - datetime.timedelta(days=offset)
-        if not config.is_in_season(sport, d):
-            continue
-        if date_type == 'week':
-            week = config.date_to_week(sport, d)
-            if week is not None:
-                key = str(week)
-                if key not in keys:
-                    keys.append(key)
-        else:
-            keys.append(d.strftime('%Y-%m-%d'))
-    return keys
+
+    if cfg['date_type'] == 'date':
+        test_d = datetime.date.fromisoformat(test_key)
+        season_start, _ = _season_window_for(sport, test_d)
+        prev_season_start, _ = _season_window_for(sport, season_start - datetime.timedelta(days=1))
+        prev_start_iso = prev_season_start.strftime('%Y-%m-%d')
+        return [k for k in available if prev_start_iso <= k < test_key]
+
+    test_week = int(test_key)
+    return [k for k in available if k.isdigit() and int(k) < test_week]
 
 
 def get_daily_picks(
     sport: str,
     date_or_week,
-    training_window_days: int = 60,
+    training_window_days: int = 60,  # unused; kept for API compatibility
     force_refresh: bool = False,
     model_type: str = 'logreg',
     meta_threshold: float = 0.0,
@@ -83,11 +87,9 @@ def get_daily_picks(
     """
     Return picks for one sport on one date/week.
 
-    Steps:
-      1. Load today's odds from cache; fetch live and cache if absent or forced.
-      2. Load training data from cache for the prior training_window_days.
-      3. Train PickEngine on the combined training DataFrame.
-      4. Return picks for today's games.
+    Training data = all cached entries in the same season, strictly before
+    date_or_week — identical to the Backtester's walk-forward logic so that
+    live predictions are comparable to backtest performance.
     """
     key = _cache_key(sport, date_or_week)
 
@@ -97,13 +99,7 @@ def get_daily_picks(
     else:
         df_today = store.load(sport, key)
 
-    if isinstance(date_or_week, str) and '-' in date_or_week:
-        anchor = datetime.date.fromisoformat(date_or_week)
-    else:
-        # week-based: use today as anchor for training window lookup
-        anchor = datetime.date.today()
-
-    training_keys = _training_dates(sport, anchor, training_window_days)
+    training_keys = _training_keys_for_date(sport, key)
     training_frames = []
     for tk in training_keys:
         df = store.load(sport, tk)
