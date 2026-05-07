@@ -346,13 +346,14 @@ export function TerminalHome({ palette }: Props) {
                 gridColumn: 'span 4',
                 padding: 24,
                 fontFamily: FONT_MONO,
-                fontSize: 11,
+                fontSize: 12,
                 color: palette.muted,
                 border: `1px solid ${palette.border}`,
                 background: palette.surface,
+                textAlign: 'center',
               }}
             >
-              NO OPEN PICKS RIGHT NOW.
+              Our model hasn&apos;t found any profitable games today.
             </div>
           )}
         </div>

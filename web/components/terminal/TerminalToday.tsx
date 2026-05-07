@@ -65,6 +65,7 @@ export function TerminalToday({ palette }: Props) {
   const [selected, setSelected] = useState<SelectedPick | null>(null)
   const [filter, setFilter] = useState<string>('ALL')
   const [sort, setSort] = useState<SortMode>('EDGE')
+  const [picksOnly, setPicksOnly] = useState(true)
 
   const all = useMemo(() => (data ? flattenUpcoming(data.sports) : []), [data])
   const sportsAvail = useMemo(() => {
@@ -73,9 +74,10 @@ export function TerminalToday({ palette }: Props) {
     return Array.from(set).sort()
   }, [all])
   const filtered = useMemo(() => {
-    const base = filter === 'ALL' ? all : all.filter((x) => x.sport.toUpperCase() === filter)
+    let base = filter === 'ALL' ? all : all.filter((x) => x.sport.toUpperCase() === filter)
+    if (picksOnly) base = base.filter((x) => x.raw.pick && x.raw.pick !== 'No Pick')
     return sortItems(base, sort)
-  }, [all, filter, sort])
+  }, [all, filter, sort, picksOnly])
 
   const dateLabel = new Date().toLocaleDateString('en-US', {
     month: '2-digit',
@@ -123,6 +125,21 @@ export function TerminalToday({ palette }: Props) {
             </h2>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setPicksOnly(!picksOnly)}
+              style={{
+                padding: '6px 12px',
+                fontFamily: FONT_MONO,
+                fontSize: 11,
+                letterSpacing: 0.5,
+                cursor: 'pointer',
+                background: picksOnly ? palette.accent : 'transparent',
+                color: picksOnly ? palette.bg : palette.muted,
+                border: `1px solid ${picksOnly ? palette.accent : palette.border}`,
+              }}
+            >
+              PICKS ONLY
+            </button>
             <SortFilter palette={palette} value={sort} onChange={setSort} />
             <SportFilter
               palette={palette}
@@ -167,11 +184,13 @@ export function TerminalToday({ palette }: Props) {
               padding: 48,
               textAlign: 'center',
               fontFamily: FONT_MONO,
-              fontSize: 11,
+              fontSize: 12,
               color: palette.muted,
             }}
           >
-            NO PICKS FOR THIS FILTER.
+            {picksOnly
+              ? 'Our model hasn\'t found any profitable games today.'
+              : 'NO GAMES FOR THIS FILTER.'}
           </div>
         )}
 
