@@ -24,6 +24,8 @@ import datetime
 import math
 import sys
 import os
+import threading
+import time
 
 # Ensure project root is on path when run from anywhere
 sys.path.insert(0, os.path.dirname(__file__))
@@ -42,6 +44,35 @@ limiter = Limiter(
     default_limits=['200 per minute'],
     storage_uri='memory://',
 )
+
+# ---------------------------------------------------------------------------
+# Server-side upcoming-picks cache
+#
+# All /api/picks/upcoming requests with the default meta_threshold (0.0) are
+# served from this dict, giving every user an instant response.  A background
+# thread re-scrapes SBR and rebuilds the cache every PICKS_CACHE_TTL seconds
+# so picks stay live as lines move throughout the day.
+# ---------------------------------------------------------------------------
+_upcoming_cache: dict = {}          # (date_str, model_type) -> {'payload': dict, 'ts': float}
+_cache_lock = threading.Lock()
+PICKS_CACHE_TTL = 900               # 15 min safety-net TTL; refresh loop runs every 5 min
+PICKS_REFRESH_INTERVAL = 300        # re-scrape SBR every 5 minutes
+
+
+def _cache_get(date: str, model: str) -> dict | None:
+    """Return cached JSON payload if it exists and is not stale, else None."""
+    with _cache_lock:
+        entry = _upcoming_cache.get((date, model))
+    if entry is None:
+        return None
+    if time.time() - entry['ts'] > PICKS_CACHE_TTL:
+        return None
+    return entry['payload']
+
+
+def _cache_put(date: str, model: str, payload: dict) -> None:
+    with _cache_lock:
+        _upcoming_cache[(date, model)] = {'payload': payload, 'ts': time.time()}
 
 
 def _safe_num(value):
@@ -166,6 +197,31 @@ def picks_all():
         return jsonify({'date': date_str, 'sports': {}, 'error': str(exc)}), 500
 
 
+def _build_upcoming_payload(
+    date_str: str,
+    model_type: str,
+    meta_threshold: float,
+    results: dict,
+) -> dict:
+    """Serialize run_all_sports_upcoming() output to the wire JSON shape."""
+    tomorrow_str = (
+        datetime.date.fromisoformat(date_str) + datetime.timedelta(days=1)
+    ).isoformat()
+    return {
+        'date': date_str,
+        'tomorrow_date': tomorrow_str,
+        'model': model_type,
+        'meta_threshold': meta_threshold,
+        'sports': {
+            sport: {
+                'today': [_pick_to_dict(p) for p in buckets['today']],
+                'tomorrow': [_pick_to_dict(p) for p in buckets['tomorrow']],
+            }
+            for sport, buckets in results.items()
+        },
+    }
+
+
 @app.route('/api/picks/upcoming')
 def picks_upcoming():
     """
@@ -180,31 +236,32 @@ def picks_upcoming():
           ...
         }
       }
+
+    Requests with the default meta_threshold (0.0) are served from the
+    in-memory cache populated by _picks_refresh_loop so every user gets an
+    instant response.  The background loop re-scrapes SBR every 5 minutes so
+    picks stay live as lines move.
     """
     date_str = request.args.get('date', datetime.date.today().isoformat())
     model_type = request.args.get('model', 'logreg_v2')
     meta_threshold = _meta_threshold_arg()
+
+    # Fast path: serve from in-memory cache for standard requests
+    if meta_threshold == 0.0:
+        cached = _cache_get(date_str, model_type)
+        if cached is not None:
+            return jsonify(cached)
+
+    # Slow path: cache miss (first request of the day or custom threshold)
     try:
         from runner import run_all_sports_upcoming
         results = run_all_sports_upcoming(
             date_str, model_type=model_type, meta_threshold=meta_threshold,
         )
-        tomorrow_str = (
-            datetime.date.fromisoformat(date_str) + datetime.timedelta(days=1)
-        ).isoformat()
-        return jsonify({
-            'date': date_str,
-            'tomorrow_date': tomorrow_str,
-            'model': model_type,
-            'meta_threshold': meta_threshold,
-            'sports': {
-                sport: {
-                    'today': [_pick_to_dict(p) for p in buckets['today']],
-                    'tomorrow': [_pick_to_dict(p) for p in buckets['tomorrow']],
-                }
-                for sport, buckets in results.items()
-            },
-        })
+        payload = _build_upcoming_payload(date_str, model_type, meta_threshold, results)
+        if meta_threshold == 0.0:
+            _cache_put(date_str, model_type, payload)
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({
             'date': date_str,
@@ -494,10 +551,70 @@ def history_rolling():
     })
 
 
+def _picks_refresh_loop() -> None:
+    """
+    Background thread: keeps the upcoming-picks in-memory cache warm.
+
+    On first iteration the loop computes picks from whatever SQLite data the
+    startup prefetch already loaded (no extra SBR scrape).  Every subsequent
+    iteration re-scrapes SBR for today/tomorrow (force-refreshes SQLite) then
+    recomputes picks for both models, so picks update as lines move throughout
+    the day.  The loop also evicts stale entries for dates other than today.
+    """
+    skip_first_scrape = True   # prefetch thread already refreshed SBR on startup
+
+    while True:
+        today = datetime.date.today().isoformat()
+
+        if not skip_first_scrape:
+            try:
+                from prefetch import refresh_today_and_tomorrow
+                refresh_today_and_tomorrow(delay_seconds=0.3)
+            except Exception as exc:
+                print(f'[picks-refresh] SBR refresh failed: {exc}', flush=True)
+        skip_first_scrape = False
+
+        for model_type in ('logreg', 'logreg_v2'):
+            try:
+                from runner import run_all_sports_upcoming
+                results = run_all_sports_upcoming(
+                    today, model_type=model_type, meta_threshold=0.0,
+                )
+                payload = _build_upcoming_payload(today, model_type, 0.0, results)
+                _cache_put(today, model_type, payload)
+                n = sum(
+                    len(v['today']) + len(v['tomorrow'])
+                    for v in payload['sports'].values()
+                )
+                print(f'[picks-refresh] cached {today}/{model_type} — {n} picks', flush=True)
+            except Exception as exc:
+                print(f'[picks-refresh] {model_type} FAILED: {exc}', flush=True)
+
+        # Evict entries for previous dates (midnight rollover)
+        with _cache_lock:
+            stale = [k for k in _upcoming_cache if k[0] != today]
+            for k in stale:
+                del _upcoming_cache[k]
+
+        time.sleep(PICKS_REFRESH_INTERVAL)
+
+
+def _start_picks_refresh() -> threading.Thread:
+    """Launch _picks_refresh_loop on a daemon thread and return the handle."""
+    thread = threading.Thread(
+        target=_picks_refresh_loop,
+        name='picks-refresh',
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 if __name__ == '__main__':
     from prefetch import start_background_prefetch
     from waitress import serve
     start_background_prefetch(fallback_days_back=60)
+    _start_picks_refresh()
     # waitress handles long requests + concurrent threads more reliably than
     # Werkzeug's dev server, which drops connections on Windows during multi-
     # second requests like /api/backtest.
