@@ -147,6 +147,34 @@ no GitHub Actions or external cron is needed for picks freshness.
 0 3 * * 1  cd /opt/axiom && python train_meta_model.py --walk-forward >> /var/log/axiom-retrain.log 2>&1
 ```
 
+### When to `git pull` on the droplet
+
+**ALWAYS tell the user to run the following on the droplet after any of these changes:**
+
+```bash
+ssh root@157.230.56.76
+cd /opt/axiom
+git pull
+systemctl restart axiom
+```
+
+Changes that require a droplet `git pull` + restart:
+- Any `.py` file (`api.py`, `retrieve.py`, `runner.py`, `picks.py`, `models.py`, `meta_models.py`, `store.py`, `backtest.py`, `prefetch.py`, `config.py`, `betmath.py`, `package.py`, `bayes.py`, `sports.py`, etc.)
+- `requirements.txt` — also run `pip install -r requirements.txt` inside the venv after pulling
+- `rolling_backtest.py`, `backtest_history.py`, `train_meta_model.py`, `optimize_threshold.py`, `seed_db.py`
+
+Changes that do NOT require a droplet pull (Netlify deploys automatically):
+- Anything under `web/` — TypeScript, TSX, CSS, Next.js config
+- `netlify.toml`
+- `README.md`, `CLAUDE.md`, `.env.example`
+
+If `requirements.txt` changed, remind the user to run inside the venv:
+```bash
+source /opt/axiom/venv/bin/activate
+pip install -r requirements.txt
+systemctl restart axiom
+```
+
 ## Architecture
 
 Sports betting analytics pipeline: scrape odds → cache → transform → Naive Bayes picks → REST API → Next.js website.
