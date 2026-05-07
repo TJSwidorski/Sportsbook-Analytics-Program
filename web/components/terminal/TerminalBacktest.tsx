@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Palette } from '@/lib/palette'
 import { FONT_MONO } from '@/lib/palette'
 import { useBacktest, type BacktestGameLog } from '@/lib/use-backtest'
@@ -12,7 +12,12 @@ interface Props {
   palette: Palette
 }
 
-const SPORTS = ['nba', 'nfl', 'nhl', 'mlb', 'mls', 'ncaaf', 'ncaab', 'wnba', 'cfl'] as const
+const ALL_SPORTS = ['nba', 'nfl', 'nhl', 'mlb', 'mls', 'ncaaf', 'ncaab', 'wnba', 'cfl'] as const
+
+const MODEL_OPTIONS = [
+  { label: 'V1 · LOGREG', value: 'logreg' },
+  { label: 'V2 · LOGREG+GATE', value: 'logreg_v2' },
+]
 
 function defaultDates(): { start: string; end: string } {
   const today = new Date()
@@ -151,22 +156,61 @@ function niceTicks(min: number, max: number, count: number): number[] {
   return out
 }
 
+const selectStyle = (palette: Palette): React.CSSProperties => ({
+  padding: '6px 10px',
+  background: palette.surface2,
+  color: palette.text,
+  border: `1px solid ${palette.border2}`,
+  fontFamily: FONT_MONO,
+  fontSize: 11,
+  letterSpacing: 0.5,
+  cursor: 'pointer',
+})
+
 export function TerminalBacktest({ palette }: Props) {
-  const { data: history } = useHistory()
+  // Season grid / all-time KPI state
+  const [histModel, setHistModel] = useState('logreg_v2')
+  const [sportFilter, setSportFilter] = useState('ALL')
+  const [yearFilter, setYearFilter] = useState('ALL')
+  const { data: history } = useHistory(histModel)
+
+  // Manual backtest state
   const dflt = defaultDates()
-  const [sport, setSport] = useState<(typeof SPORTS)[number]>('nba')
+  const [sport, setSport] = useState<(typeof ALL_SPORTS)[number]>('nba')
   const [start, setStart] = useState(dflt.start)
   const [end, setEnd] = useState(dflt.end)
+  const [btModel, setBtModel] = useState('logreg_v2')
   const { status, result, error, run } = useBacktest()
+
+  const availableSports = useMemo(() => {
+    if (!history?.sports) return []
+    return Array.from(new Set(history.sports.map((r) => r.sport))).sort()
+  }, [history])
+
+  const availableYears = useMemo(() => {
+    if (!history?.sports) return []
+    return Array.from(new Set(history.sports.map((r) => r.season_year))).sort((a, b) => b - a)
+  }, [history])
+
+  const filteredRows = useMemo(() => {
+    if (!history?.sports) return []
+    return history.sports.filter((r) => {
+      if (sportFilter !== 'ALL' && r.sport !== sportFilter) return false
+      if (yearFilter !== 'ALL' && r.season_year !== Number(yearFilter)) return false
+      return true
+    })
+  }, [history, sportFilter, yearFilter])
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    run({ sport, start, end })
+    run({ sport, start, end, model: btModel })
   }
 
   return (
     <div style={{ padding: '32px', maxWidth: 1376, margin: '0 auto' }}>
-      <div style={{ marginBottom: 32 }}>
+
+      {/* ── Section header ── */}
+      <div style={{ marginBottom: 24 }}>
         <div
           style={{
             fontFamily: FONT_MONO,
@@ -176,17 +220,41 @@ export function TerminalBacktest({ palette }: Props) {
             marginBottom: 6,
           }}
         >
-          HISTORICAL BACKTEST / WALK-FORWARD
+          SEASON BACKTEST / WALK-FORWARD
         </div>
-        <h2 style={{ fontSize: 36, fontWeight: 500, margin: '0 0 12px', letterSpacing: -1 }}>
-          Run a backtest. <span style={{ color: palette.muted }}>Every pick logged.</span>
+        <h2 style={{ fontSize: 36, fontWeight: 500, margin: '0 0 10px', letterSpacing: -1 }}>
+          Season Results.{' '}
+          <span style={{ color: palette.muted }}>Every completed season, every pick.</span>
         </h2>
-        <p style={{ fontSize: 14, color: palette.muted, maxWidth: 640, lineHeight: 1.5 }}>
-          Walk-forward training on cached scraped odds — flat 1u staking + fractional Kelly sizing.
-          Cache must already cover the requested window (run <code>python seed_db.py</code> first).
+        <p style={{ fontSize: 14, color: palette.muted, maxWidth: 640, lineHeight: 1.5, margin: 0 }}>
+          Walk-forward training — for each date, the model only sees data strictly before
+          that date. No leakage. Cache covers the last five seasons per sport.
         </p>
       </div>
 
+      {/* ── Model selector ── */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20, fontFamily: FONT_MONO, fontSize: 11 }}>
+        {MODEL_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setHistModel(opt.value)}
+            style={{
+              padding: '6px 12px',
+              background: histModel === opt.value ? palette.accent : palette.surface,
+              color: histModel === opt.value ? palette.bg : palette.muted,
+              border: `1px solid ${histModel === opt.value ? palette.accent : palette.border2}`,
+              cursor: 'pointer',
+              letterSpacing: 1,
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── All-time KPI strip ── */}
       {history?.totals && (
         <div style={{ marginBottom: 32 }}>
           <div
@@ -246,9 +314,10 @@ export function TerminalBacktest({ palette }: Props) {
               {
                 label: 'ALL-TIME UNITS',
                 value: `${history.totals.flat_units >= 0 ? '+' : ''}${history.totals.flat_units.toFixed(2)}`,
-                delta: history.totals.roi_flat != null
-                  ? `${(history.totals.roi_flat * 100 >= 0 ? '+' : '')}${(history.totals.roi_flat * 100).toFixed(2)}% ROI`
-                  : undefined,
+                delta:
+                  history.totals.roi_flat != null
+                    ? `${history.totals.roi_flat * 100 >= 0 ? '+' : ''}${(history.totals.roi_flat * 100).toFixed(2)}% ROI`
+                    : undefined,
                 color: history.totals.flat_units >= 0 ? 'accent' : 'danger',
               },
               {
@@ -264,6 +333,92 @@ export function TerminalBacktest({ palette }: Props) {
         </div>
       )}
 
+      {/* ── Season grid with sport/year filters ── */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+          gap: 16,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div
+          style={{
+            fontFamily: FONT_MONO,
+            fontSize: 11,
+            color: palette.muted,
+            letterSpacing: 1.5,
+          }}
+        >
+          PER-SPORT / SEASON RESULTS
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <select
+            value={sportFilter}
+            onChange={(e) => setSportFilter(e.target.value)}
+            style={selectStyle(palette)}
+          >
+            <option value="ALL">ALL SPORTS</option>
+            {availableSports.map((s) => (
+              <option key={s} value={s}>
+                {s.toUpperCase()}
+              </option>
+            ))}
+          </select>
+          <select
+            value={yearFilter}
+            onChange={(e) => setYearFilter(e.target.value)}
+            style={selectStyle(palette)}
+          >
+            <option value="ALL">ALL YEARS</option>
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <SeasonGrid palette={palette} rows={filteredRows} />
+
+      {/* ── Divider ── */}
+      <div
+        style={{
+          margin: '48px 0 36px',
+          borderTop: `1px solid ${palette.border}`,
+          position: 'relative',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: -9,
+            left: 0,
+            background: palette.bg,
+            paddingRight: 12,
+            fontFamily: FONT_MONO,
+            fontSize: 10,
+            color: palette.muted,
+            letterSpacing: 1.5,
+          }}
+        >
+          CUSTOM BACKTEST / DATE RANGE
+        </div>
+      </div>
+
+      {/* ── Manual backtest (moved to bottom) ── */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 28, fontWeight: 500, margin: '0 0 8px', letterSpacing: -0.5 }}>
+          Run a custom backtest.
+        </h2>
+        <p style={{ fontSize: 14, color: palette.muted, maxWidth: 640, lineHeight: 1.5, margin: 0 }}>
+          Walk-forward over any date range. Flat 1u staking + fractional Kelly sizing.
+          Cache must already cover the requested window.
+        </p>
+      </div>
+
       <form
         onSubmit={onSubmit}
         style={{
@@ -272,7 +427,7 @@ export function TerminalBacktest({ palette }: Props) {
           padding: 24,
           marginBottom: 24,
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr) auto',
+          gridTemplateColumns: 'repeat(5, 1fr) auto',
           gap: 16,
           alignItems: 'end',
         }}
@@ -291,7 +446,7 @@ export function TerminalBacktest({ palette }: Props) {
           </div>
           <select
             value={sport}
-            onChange={(e) => setSport(e.target.value as (typeof SPORTS)[number])}
+            onChange={(e) => setSport(e.target.value as (typeof ALL_SPORTS)[number])}
             style={{
               width: '100%',
               padding: '8px 10px',
@@ -302,7 +457,7 @@ export function TerminalBacktest({ palette }: Props) {
               fontSize: 13,
             }}
           >
-            {SPORTS.map((s) => (
+            {ALL_SPORTS.map((s) => (
               <option key={s} value={s}>
                 {s.toUpperCase()}
               </option>
@@ -362,6 +517,38 @@ export function TerminalBacktest({ palette }: Props) {
               fontSize: 13,
             }}
           />
+        </div>
+        <div>
+          <div
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 10,
+              color: palette.muted,
+              letterSpacing: 1.5,
+              marginBottom: 6,
+            }}
+          >
+            MODEL
+          </div>
+          <select
+            value={btModel}
+            onChange={(e) => setBtModel(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '8px 10px',
+              background: palette.surface2,
+              color: palette.text,
+              border: `1px solid ${palette.border2}`,
+              fontFamily: FONT_MONO,
+              fontSize: 13,
+            }}
+          >
+            {MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div />
         <button
@@ -458,7 +645,7 @@ export function TerminalBacktest({ palette }: Props) {
                 marginTop: 8,
                 letterSpacing: 0.5,
               }}
-              title="The furthest the cumulative-units curve dipped below the starting bankroll of zero during this window. A 0u drawdown means the curve never went negative; a large drawdown means the bankroll spent time underwater before recovering."
+              title="The furthest the cumulative-units curve dipped below the starting bankroll of zero during this window."
             >
               MAX DRAWDOWN = furthest the unit curve dipped below 0u during this run.
             </div>
@@ -495,20 +682,6 @@ export function TerminalBacktest({ palette }: Props) {
           </div>
         </>
       )}
-
-      <div style={{ marginBottom: 12 }}>
-        <div
-          style={{
-            fontFamily: FONT_MONO,
-            fontSize: 11,
-            color: palette.muted,
-            letterSpacing: 1.5,
-          }}
-        >
-          PER-SPORT / LAST COMPLETED SEASON
-        </div>
-      </div>
-      <SeasonGrid palette={palette} rows={history?.sports ?? []} />
     </div>
   )
 }

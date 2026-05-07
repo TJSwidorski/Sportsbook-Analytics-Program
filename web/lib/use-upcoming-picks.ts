@@ -43,16 +43,15 @@ interface UseUpcomingResult {
   refetch: () => void
 }
 
-export function useUpcomingPicks(date: string): UseUpcomingResult {
+export function useUpcomingPicks(date: string, model = 'logreg_v2'): UseUpcomingResult {
   const fetcher = useCallback(
-    () => jsonFetch<UpcomingResponse>(`/api/picks/upcoming?date=${date}`),
-    [date],
+    () => jsonFetch<UpcomingResponse>(`/api/picks/upcoming?date=${date}&model=${model}`),
+    [date, model],
   )
   const { status, data, error, refetch } = useCachedFetch<UpcomingResponse>(
-    `upcoming:${date}`,
+    `upcoming:${date}:${model}`,
     fetcher,
   )
-  // 'empty' is not produced by this hook; narrow to the original Status union.
   const narrowed: Status = status === 'empty' ? 'ready' : status
   return { status: narrowed, data, error, refetch }
 }

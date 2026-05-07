@@ -10,6 +10,11 @@ import { SportFilter } from './SportFilter'
 import { SortFilter, americanToDecimal, type SortMode } from './SortFilter'
 import { rawPickToGameCard, flattenUpcoming } from '@/lib/pick-adapter'
 
+const MODEL_OPTIONS = [
+  { label: 'V1', value: 'logreg' },
+  { label: 'V2', value: 'logreg_v2' },
+]
+
 interface Props {
   palette: Palette
 }
@@ -61,7 +66,8 @@ function sortItems(items: FlatItem[], mode: SortMode): FlatItem[] {
 
 export function TerminalToday({ palette }: Props) {
   const today = new Date().toISOString().slice(0, 10)
-  const { status, data, error } = useUpcomingPicks(today)
+  const [model, setModel] = useState('logreg_v2')
+  const { status, data, error } = useUpcomingPicks(today, model)
   const [selected, setSelected] = useState<SelectedPick | null>(null)
   const [filter, setFilter] = useState<string>('ALL')
   const [sort, setSort] = useState<SortMode>('EDGE')
@@ -124,7 +130,28 @@ export function TerminalToday({ palette }: Props) {
               Today&apos;s Board
             </h2>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 4, fontFamily: FONT_MONO, fontSize: 11 }}>
+              {MODEL_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setModel(opt.value)}
+                  style={{
+                    padding: '6px 10px',
+                    fontFamily: FONT_MONO,
+                    fontSize: 11,
+                    letterSpacing: 0.5,
+                    cursor: 'pointer',
+                    background: model === opt.value ? palette.blue : 'transparent',
+                    color: model === opt.value ? palette.bg : palette.muted,
+                    border: `1px solid ${model === opt.value ? palette.blue : palette.border}`,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ width: 1, height: 20, background: palette.border, margin: '0 4px' }} />
             <button
               onClick={() => setPicksOnly(!picksOnly)}
               style={{

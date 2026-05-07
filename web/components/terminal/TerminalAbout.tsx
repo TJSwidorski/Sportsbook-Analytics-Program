@@ -137,6 +137,174 @@ export function TerminalAbout({ palette }: Props) {
           </Section>
         </div>
 
+        {/* Model descriptions */}
+        <div
+          style={{
+            background: palette.surface,
+            border: `1px solid ${palette.border}`,
+            borderLeft: `2px solid ${palette.accent}`,
+            padding: 36,
+            marginBottom: 32,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.accent,
+              letterSpacing: 1.5,
+              marginBottom: 20,
+            }}
+          >
+            MODEL REFERENCE
+          </div>
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 500,
+              letterSpacing: -0.3,
+              marginBottom: 24,
+            }}
+          >
+            Two models, different tradeoffs. Pick the one that fits how you bet.
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 20,
+              marginBottom: 8,
+            }}
+          >
+            {/* V1 card */}
+            <div
+              style={{
+                background: palette.surface2,
+                border: `1px solid ${palette.border2}`,
+                borderTop: `2px solid ${palette.blue}`,
+                padding: 24,
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: FONT_MONO,
+                  fontSize: 10,
+                  color: palette.blue,
+                  letterSpacing: 1.5,
+                  marginBottom: 10,
+                }}
+              >
+                V1 · LOGREG
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
+                Base model — fires on every positive-EV game
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.65, color: palette.text, marginBottom: 16 }}>
+                <strong>How it works:</strong> For each game, a Naive Bayes classifier and a
+                logistic regression are each trained on the current season&apos;s historical
+                odds. Their outputs are combined into a win probability. A pick fires whenever
+                the expected value is positive — i.e. the model&apos;s probability, multiplied
+                by the decimal odds, exceeds 1.0.
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.65, color: palette.text }}>
+                <strong>When to use V1:</strong> More picks per day, especially at the start
+                of a season when the meta-gate hasn&apos;t seen enough history to be
+                selective. Good for users who want higher volume and are comfortable with
+                more variance.
+              </div>
+              <div
+                style={{
+                  marginTop: 16,
+                  fontFamily: FONT_MONO,
+                  fontSize: 11,
+                  color: palette.muted,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                }}
+              >
+                <span>● PICK RULE: EV ≥ 0</span>
+                <span>● SIZING: fractional Kelly on EV</span>
+                <span>● VOLUME: higher — fires on most slates</span>
+              </div>
+            </div>
+
+            {/* V2 card */}
+            <div
+              style={{
+                background: palette.surface2,
+                border: `1px solid ${palette.border2}`,
+                borderTop: `2px solid ${palette.accent}`,
+                padding: 24,
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: FONT_MONO,
+                  fontSize: 10,
+                  color: palette.accent,
+                  letterSpacing: 1.5,
+                  marginBottom: 10,
+                }}
+              >
+                V2 · LOGREG + META-GATE ★ DEFAULT
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
+                Filtered model — only fires when the gate approves
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.65, color: palette.text, marginBottom: 16 }}>
+                <strong>How it works:</strong> V1&apos;s base model runs first. Its output
+                (EV, confidence, line magnitude, book agreement, sport) is then scored by a{' '}
+                <em>meta-gate</em> — a gradient-boosted regressor trained offline on
+                walk-forward backtests to predict realized kelly units. The pick only fires
+                when the gate&apos;s predicted units exceed a per-sport threshold. Both the
+                gate and thresholds are retrained weekly without any future-data leakage.
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.65, color: palette.text }}>
+                <strong>When to use V2:</strong> Fewer, higher-conviction picks. The gate
+                filters out marginal positive-EV games where V1&apos;s base model tends to
+                be noisy. Better risk-adjusted performance in backtests; expect dry spells
+                of several days, especially mid-season.
+              </div>
+              <div
+                style={{
+                  marginTop: 16,
+                  fontFamily: FONT_MONO,
+                  fontSize: 11,
+                  color: palette.muted,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                }}
+              >
+                <span>● PICK RULE: gate predicted_units &gt; threshold</span>
+                <span>● SIZING: Kelly via gate score</span>
+                <span>● VOLUME: lower — selective by design</span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: 20,
+              padding: '14px 18px',
+              background: palette.surface,
+              border: `1px solid ${palette.border}`,
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              color: palette.muted,
+              lineHeight: 1.6,
+            }}
+          >
+            <span style={{ color: palette.text }}>TIP:</span> The rolling and season backtests
+            on the Backtest tab let you compare both models side-by-side on completed data
+            before committing to one. V2 is the default because it has better risk-adjusted
+            numbers in out-of-sample backtests, but V1 gives you a fallback on days V2 finds
+            nothing.
+          </div>
+        </div>
+
         {/* Legal disclaimer */}
         <div
           style={{
