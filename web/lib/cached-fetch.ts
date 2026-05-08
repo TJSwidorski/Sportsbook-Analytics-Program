@@ -2,6 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+// In production (static export on Cloudflare) the browser calls the Flask API
+// directly.  Set NEXT_PUBLIC_API_BASE_URL=https://api.axiompicks.com in the
+// Cloudflare Pages environment variables.
+// For local dev set it to http://localhost:5000 in web/.env.local.
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
+
 export type CachedStatus = 'loading' | 'ready' | 'error' | 'empty'
 
 export interface CachedResult<T> {
@@ -55,7 +61,7 @@ class EmptyResponseError extends Error {
 }
 
 export async function jsonFetch<T>(url: string, opts: CachedFetchOptions = {}): Promise<T> {
-  const res = await fetch(url)
+  const res = await fetch(`${API_BASE}${url}`)
   const text = await res.text()
   let parsed: unknown
   try {

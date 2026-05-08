@@ -17,6 +17,10 @@ data/
 # Claude Code session
 .claude/
 
+# Local environment overrides (never commit)
+.env.local
+web/.env.local
+
 # Component spec files (design references, not source code) — root-level only
 /components/
 
